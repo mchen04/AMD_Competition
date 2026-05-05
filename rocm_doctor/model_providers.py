@@ -146,7 +146,7 @@ class OpenAICompatibleAdapter:
             "hardware": self.config.get("hardware", {}),
         }
         context.update(extra_context)
-        return render_template(self.config_path, template_ref, context)
+        return render_template(self.config_path, str(template_ref), context)
 
 
 def get_model_provider_adapter(config_path: str | Path, config: dict[str, Any]) -> ModelProviderAdapter:
@@ -176,9 +176,6 @@ def _validate_chat_response(payload: Any, profile: RuntimeProfile) -> str:
     content = str(message.get("content", ""))
     if not content.strip():
         return "empty chat response content"
-    max_chars = int(profile.validation.get("max_health_response_chars", 120))
-    if len(content) > max_chars:
-        return f"chat response exceeded {max_chars} characters"
     repeated_limit = int(profile.validation.get("max_repeated_token_count", 8))
     tokens = content.split()
     if tokens:
@@ -192,6 +189,13 @@ def _validate_chat_response(payload: Any, profile: RuntimeProfile) -> str:
             else:
                 current = 1
                 previous = token
+    max_chars = int(profile.validation.get("max_health_response_chars", 120))
+    if len(content) > max_chars:
+        return f"chat response exceeded {max_chars} characters"
+    expected = str(profile.validation.get("expected_health_response", "")).strip()
+    match_mode = str(profile.validation.get("health_response_match", "case_insensitive"))
+    if expected and not _content_matches_expected(content, expected, match_mode):
+        return f"expected health response {expected!r}, got {content.strip()!r}"
     return ""
 
 
@@ -206,3 +210,14 @@ def _validate_tool_call_response(payload: Any) -> str:
     if name != "rocm_doctor_ping":
         return f"unexpected tool call name: {name}"
     return ""
+
+
+def _content_matches_expected(content: str, expected: str, match_mode: str) -> bool:
+    actual = content.strip()
+    if match_mode == "disabled":
+        return True
+    if match_mode == "exact":
+        return actual == expected
+    if match_mode == "case_insensitive":
+        return actual.casefold() == expected.casefold()
+    return actual.casefold() == expected.casefold()

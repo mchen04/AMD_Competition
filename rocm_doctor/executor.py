@@ -48,11 +48,15 @@ def execute_plan(config_path: str | Path, plan: RepairPlan) -> RepairResult:
             before=before,
             after=before,
             rollback=recipe.rollback_strategy,
+            failure_class=plan.failure_class,
         )
 
     changed_paths: list[str] = []
     for dotted_key, value in changes.items():
-        old_value = get_dotted(config, dotted_key)
+        try:
+            old_value = get_dotted(config, dotted_key)
+        except KeyError:
+            old_value = None
         if old_value != value:
             set_dotted(config, dotted_key, value)
             changed_paths.append(dotted_key)
@@ -68,6 +72,7 @@ def execute_plan(config_path: str | Path, plan: RepairPlan) -> RepairResult:
         before=before,
         after=after,
         rollback=recipe.rollback_strategy,
+        failure_class=plan.failure_class,
     )
 
 
@@ -108,6 +113,8 @@ def _validate_safety(
             raise SafetyError("provider patch path does not match the active config file")
 
     provider_changes = patch.get("changes", {})
+    if not provider_changes and patch and not {"path", "changes"} & set(patch):
+        provider_changes = patch
     if not isinstance(provider_changes, dict):
         raise SafetyError("provider config_patch.changes must be an object")
 
@@ -134,6 +141,10 @@ def _validate_safety(
         ]
         if deterministic_changes[endpoint_path] != expected:
             raise SafetyError("network endpoint change is only allowed to the expected endpoint URL")
+    if "active_model_provider" in deterministic_changes:
+        fallback = str(deterministic_changes["active_model_provider"])
+        if fallback not in config["model_providers"]:
+            raise SafetyError(f"fallback model provider is not configured: {fallback}")
 
 
 def _rejected(recipe_id: str, before: dict[str, Any], reason: str) -> RepairResult:

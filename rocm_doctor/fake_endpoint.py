@@ -42,14 +42,17 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": {"message": "not found"}})
             return
         if self.server.failure_mode == "chat_invalid_json":
+            data = b'{"choices": ['
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            self.wfile.write(b'{"choices": [')
+            self.wfile.write(data)
             return
         if self.server.failure_mode == "empty_response":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return
         if self.server.failure_mode == "partial_response":
@@ -78,6 +81,20 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"data: {\"choices\":[")
             return
+        if payload.get("stream") and not payload.get("tools"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            stream = (
+                'data: {"id":"chatcmpl_rocm_doctor_fake_stream","object":"chat.completion.chunk",'
+                '"model":"%s","choices":[{"index":0,"delta":{"role":"assistant"}}]}\n\n'
+                'data: {"id":"chatcmpl_rocm_doctor_fake_stream","object":"chat.completion.chunk",'
+                '"model":"%s","choices":[{"index":0,"delta":{"content":"ROCM_DOCTOR_OK"},'
+                '"finish_reason":"stop"}]}\n\n'
+                "data: [DONE]\n\n"
+            ) % (self.server.model_id, self.server.model_id)
+            self.wfile.write(stream.encode("utf-8"))
+            return
         if payload.get("tools"):
             parser = self.headers.get("X-ROCm-Doctor-Tool-Parser", "")
             if self.server.failure_mode == "tool_wrong_name":
@@ -91,10 +108,19 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
         if self.server.failure_mode == "hallucinated_tool_call":
             self._send_json(200, _tool_call_response(self.server.model_id))
             return
+        if self.server.failure_mode == "empty_chat_content_once" and self.server._consume_once("chat"):
+            self._send_json(200, _plain_response(self.server.model_id, ""))
+            return
+        if self.server.failure_mode == "empty_chat_content":
+            self._send_json(200, _plain_response(self.server.model_id, ""))
+            return
+        if self.server.failure_mode == "instruction_drift":
+            self._send_json(200, _plain_response(self.server.model_id, "ROCM_DOCTOR_OK extra text"))
+            return
         if self.server.failure_mode == "repetitive_output":
             self._send_json(200, _plain_response(self.server.model_id, "loop " * 20))
             return
-        self._send_json(200, _plain_response(self.server.model_id, "rocm doctor ok"))
+        self._send_json(200, _plain_response(self.server.model_id, "ROCM_DOCTOR_OK"))
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -105,7 +131,10 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+        except BrokenPipeError:
+            return
 
 
 class FakeOpenAIHTTPServer(ThreadingHTTPServer):

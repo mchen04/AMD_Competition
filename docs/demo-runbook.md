@@ -25,6 +25,8 @@ Run the loop:
 
 The report records the model provider, adapter, skipped checks, diagnosis, repair, and before/after evidence.
 
+`self-heal` snapshots the config before each candidate repair, verifies after applying it, and rolls back the candidate if verification still fails.
+
 ## Optional Tiny Models
 
 `demo/ollama-tiny-models.yaml` contains OpenAI-compatible Ollama profiles for:
@@ -47,6 +49,7 @@ Tool-call and ROCm device checks are disabled for these local Ollama profiles un
 - `context_length_too_large`: lowers the active model provider context limit.
 - `tool_parser_mismatch`: restores the active provider tool parser.
 - `missing_rocm_device_flags`: restores required ROCm device flags.
+- Endpoint/proxy modes such as `empty_chat_content_once`, `slow_response`, and `stream_interrupt`: exercise token-budget tuning, timeout tuning, and streaming disablement.
 - `malformed_provider_output`, `unknown_recipe`, `unsafe_command`, `path_traversal`, `credential_modification`: fail closed with no unsafe edits.
 
 ## AMD Demo

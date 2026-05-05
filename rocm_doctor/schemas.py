@@ -6,13 +6,24 @@ from typing import Any, Mapping
 
 FAILURE_CLASSES = {
     "no_failure",
+    "endpoint_broken",
     "endpoint_unreachable",
     "wrong_endpoint_port",
+    "one_time_rate_limit",
+    "repeated_rate_limit",
+    "timeout",
+    "empty_qwen_output",
+    "instruction_drift",
+    "repetitive_loop",
+    "broken_streaming",
+    "bad_template",
+    "permanent_500",
     "context_length_too_large",
     "tool_parser_mismatch",
     "missing_rocm_device_flags",
     "provider_output_invalid",
     "provider_skipped",
+    "invalid_config",
     "config_invalid",
     "unknown_failure",
 }
@@ -47,7 +58,7 @@ class RuntimeProfile:
     request_timeout_seconds: float
     retry: RetryPolicy
     stream: bool
-    templates: dict[str, str]
+    templates: dict[str, Any]
     tool_parser: str
     expected_tool_parser: str
     tool_parser_header: str
@@ -116,11 +127,17 @@ class RepairPlan:
     recipe_id: str
     rationale: str
     config_patch: dict[str, Any] = field(default_factory=dict)
+    template_patch: dict[str, Any] = field(default_factory=dict)
+    state_patch: dict[str, Any] = field(default_factory=dict)
     command_preview: list[str] = field(default_factory=list)
     risk_level: str = "low"
     rollback: str = ""
     verification_steps: list[str] = field(default_factory=list)
     provider: str = "rules"
+    failure_class: str = ""
+    repairable: bool = True
+    expected_success_signal: str = ""
+    unrecoverable_reason: str = ""
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any], provider: str = "unknown") -> "RepairPlan":
@@ -132,15 +149,27 @@ class RepairPlan:
         patch = value.get("config_patch", {})
         if not isinstance(patch, dict):
             raise SchemaError("config_patch must be an object")
+        template_patch = value.get("template_patch", {})
+        if not isinstance(template_patch, dict):
+            raise SchemaError("template_patch must be an object")
+        state_patch = value.get("state_patch", {})
+        if not isinstance(state_patch, dict):
+            raise SchemaError("state_patch must be an object")
         return cls(
             recipe_id=_string(value["recipe_id"], "recipe_id"),
             rationale=_string(value["rationale"], "rationale"),
             config_patch=dict(patch),
+            template_patch=dict(template_patch),
+            state_patch=dict(state_patch),
             command_preview=_string_list(value.get("command_preview", []), "command_preview"),
             risk_level=risk_level,
             rollback=_string(value["rollback"], "rollback"),
             verification_steps=_string_list(value["verification_steps"], "verification_steps"),
             provider=_string(value.get("provider", provider), "provider"),
+            failure_class=_string(value.get("failure_class", ""), "failure_class"),
+            repairable=bool(value.get("repairable", True)),
+            expected_success_signal=_string(value.get("expected_success_signal", ""), "expected_success_signal"),
+            unrecoverable_reason=_string(value.get("unrecoverable_reason", ""), "unrecoverable_reason"),
         )
 
 
@@ -154,6 +183,10 @@ class RepairResult:
     before: dict[str, Any] = field(default_factory=dict)
     after: dict[str, Any] = field(default_factory=dict)
     rollback: str = ""
+    rolled_back: bool = False
+    failure_class: str = ""
+    verification_message: str = ""
+    learned: bool = False
 
 
 @dataclass
@@ -273,35 +306,46 @@ REPAIR_PLAN_JSON_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         "recipe_id": {"type": "string"},
+        "failure_class": {"type": "string"},
+        "repairable": {"type": "boolean"},
         "rationale": {"type": "string"},
         "config_patch": {
             "type": "object",
-            "additionalProperties": False,
+            "additionalProperties": True,
             "properties": {
                 "path": {"type": "string"},
                 "changes": {
                     "type": "object",
-                    "additionalProperties": False,
+                    "additionalProperties": True,
                     "properties": {},
                     "required": [],
                 },
             },
-            "required": ["path", "changes"],
         },
+        "template_patch": {"type": "object", "additionalProperties": True},
+        "state_patch": {"type": "object", "additionalProperties": True},
         "command_preview": {"type": "array", "items": {"type": "string"}},
         "risk_level": {"type": "string", "enum": sorted(RISK_LEVELS)},
         "rollback": {"type": "string"},
         "verification_steps": {"type": "array", "items": {"type": "string"}},
+        "expected_success_signal": {"type": "string"},
+        "unrecoverable_reason": {"type": "string"},
         "provider": {"type": "string"},
     },
     "required": [
         "recipe_id",
+        "failure_class",
+        "repairable",
         "rationale",
         "config_patch",
+        "template_patch",
+        "state_patch",
         "command_preview",
         "risk_level",
         "rollback",
         "verification_steps",
+        "expected_success_signal",
+        "unrecoverable_reason",
         "provider",
     ],
 }

@@ -24,6 +24,8 @@ service:
 
 self_healing:
   max_attempts: 3
+  fallback_model_provider: ""
+  developer_repair_mode: false
 
 active_model_provider: ollama-qwen3-0-6b
 model_providers:
@@ -63,6 +65,10 @@ model_providers:
         retry_on_invalid_json: true
     templates: &default_templates
       health_chat: ../templates/health_chat.j2
+      health_chat_fallbacks:
+        - ../templates/health_chat.qwen_strict.j2
+        - ../templates/health_chat.no_reasoning.j2
+        - ../templates/health_chat.minimal.j2
       tool_call: ../templates/tool_call_prompt.j2
     health: &ollama_health
       probes:
@@ -82,12 +88,24 @@ model_providers:
           - max_model_len exceeds safe_max_model_len
       safe_recipes:
         - noop
+        - retry_without_config_change
         - update_endpoint_url
+        - increase_health_max_tokens
+        - lower_health_max_tokens
+        - increase_timeout
+        - increase_retry_backoff
+        - disable_streaming
+        - switch_prompt_template
+        - fallback_model_provider
+        - restore_last_known_good_config
+        - tighten_expected_health_response
         - lower_max_model_len
     validation: &small_validation
       max_health_response_chars: 160
       max_repeated_token_count: 8
       health_max_tokens: 256
+      expected_health_response: ROCM_DOCTOR_OK
+      health_response_match: case_insensitive
 
   ollama-smollm2-135m:
     adapter: openai-compatible

@@ -19,6 +19,7 @@ from .schemas import (
     provider_skipped,
     to_jsonable,
 )
+from .state import load_state
 from .templates import TemplateRenderError, render_template
 from .transport import request_json
 
@@ -51,6 +52,9 @@ class RulesProvider:
         checks = evidence.health.checks
         profile = get_active_profile(config)
         endpoint_bits = evidence.endpoint
+        models_probe = endpoint_bits.get("models", {})
+        chat_probe = endpoint_bits.get("chat", {})
+        tool_probe = endpoint_bits.get("tool_call", {})
         if not checks.get("endpoint_models", False):
             configured = profile.base_url
             expected = profile.expected_base_url
@@ -66,13 +70,51 @@ class RulesProvider:
                     recommended_recipe_ids=["update_endpoint_url"],
                     provider=self.name,
                 )
+            if _probe_status(models_probe) == 429:
+                failure_class = _rate_limit_class(models_probe, profile.retry.max_attempts)
+                recipes = (
+                    ["retry_without_config_change"]
+                    if failure_class == "one_time_rate_limit"
+                    else ["increase_retry_backoff", "fallback_model_provider"]
+                )
+                return DiagnosisResult(
+                    failure_class=failure_class,
+                    confidence=0.9,
+                    evidence=[
+                        f"GET /v1/models returned HTTP 429 after {models_probe.get('attempts', 1)} attempt(s)"
+                    ],
+                    suspected_cause="The provider rate-limited the health check.",
+                    recommended_recipe_ids=recipes,
+                    provider=self.name,
+                )
+            if _probe_status(models_probe) and int(_probe_status(models_probe) or 0) >= 500:
+                return DiagnosisResult(
+                    failure_class="permanent_500",
+                    confidence=0.88,
+                    evidence=[
+                        f"GET /v1/models returned HTTP {models_probe.get('status_code')} "
+                        f"after {models_probe.get('attempts', 1)} attempt(s)"
+                    ],
+                    suspected_cause="The provider returned a persistent server error.",
+                    recommended_recipe_ids=["fallback_model_provider", "restart_known_service"],
+                    provider=self.name,
+                )
+            if _looks_like_timeout(str(models_probe.get("error", ""))):
+                return DiagnosisResult(
+                    failure_class="timeout",
+                    confidence=0.86,
+                    evidence=[f"GET /v1/models timed out: {models_probe.get('error', 'unknown')}"],
+                    suspected_cause="The provider did not answer before the configured timeout.",
+                    recommended_recipe_ids=["increase_timeout", "increase_retry_backoff"],
+                    provider=self.name,
+                )
             return DiagnosisResult(
                 failure_class="endpoint_unreachable",
-                confidence=0.85,
-                evidence=[f"GET /v1/models failed: {endpoint_bits['models'].get('error', 'unknown')}"],
+                confidence=0.82,
+                evidence=[f"GET /v1/models failed: {models_probe.get('error', 'unknown')}"],
                 suspected_cause="Configured model endpoint is unreachable.",
                 missing_evidence=["process table", "service logs"],
-                recommended_recipe_ids=["restart_known_service"],
+                recommended_recipe_ids=["fallback_model_provider", "restart_known_service"],
                 provider=self.name,
             )
         if not checks.get("context_length", True):
@@ -88,26 +130,121 @@ class RulesProvider:
                 provider=self.name,
             )
         if not checks.get("chat_completion", True):
+            chat_error = str(chat_probe.get("error", ""))
+            chat_status = _probe_status(chat_probe)
+            if _looks_like_template_error(chat_error):
+                return DiagnosisResult(
+                    failure_class="bad_template",
+                    confidence=0.94,
+                    evidence=[f"health template failed: {chat_error}"],
+                    suspected_cause="The configured health prompt template is missing or invalid.",
+                    recommended_recipe_ids=["switch_prompt_template"],
+                    provider=self.name,
+                )
+            if chat_status == 429:
+                failure_class = _rate_limit_class(chat_probe, profile.retry.max_attempts)
+                recipes = (
+                    ["retry_without_config_change"]
+                    if failure_class == "one_time_rate_limit"
+                    else ["increase_retry_backoff", "fallback_model_provider"]
+                )
+                return DiagnosisResult(
+                    failure_class=failure_class,
+                    confidence=0.9,
+                    evidence=[
+                        f"POST /v1/chat/completions returned HTTP 429 after {chat_probe.get('attempts', 1)} attempt(s)"
+                    ],
+                    suspected_cause="The provider rate-limited the health chat request.",
+                    recommended_recipe_ids=recipes,
+                    provider=self.name,
+                )
+            if chat_status and chat_status >= 500:
+                return DiagnosisResult(
+                    failure_class="permanent_500",
+                    confidence=0.88,
+                    evidence=[
+                        f"POST /v1/chat/completions returned HTTP {chat_status} "
+                        f"after {chat_probe.get('attempts', 1)} attempt(s)"
+                    ],
+                    suspected_cause="The provider returned a persistent server error.",
+                    recommended_recipe_ids=["fallback_model_provider", "restart_known_service"],
+                    provider=self.name,
+                )
+            if _looks_like_timeout(chat_error):
+                recipes = ["increase_timeout", "lower_health_max_tokens"]
+                if profile.stream:
+                    recipes.append("disable_streaming")
+                return DiagnosisResult(
+                    failure_class="timeout",
+                    confidence=0.88,
+                    evidence=[f"POST /v1/chat/completions timed out: {chat_error}"],
+                    suspected_cause="The health chat did not complete before the configured timeout.",
+                    recommended_recipe_ids=recipes,
+                    provider=self.name,
+                )
+            if "empty chat response content" in chat_error:
+                return DiagnosisResult(
+                    failure_class="empty_qwen_output",
+                    confidence=0.92,
+                    evidence=[chat_error],
+                    suspected_cause="The model returned an empty health response, often because reasoning consumed the output budget.",
+                    recommended_recipe_ids=["increase_health_max_tokens", "switch_prompt_template"],
+                    provider=self.name,
+                )
+            if "repetitive output loop detected" in chat_error:
+                return DiagnosisResult(
+                    failure_class="repetitive_loop",
+                    confidence=0.92,
+                    evidence=[chat_error],
+                    suspected_cause="The model repeated tokens instead of returning the health sentinel.",
+                    recommended_recipe_ids=["switch_prompt_template", "lower_health_max_tokens"],
+                    provider=self.name,
+                )
+            if "invalid streaming JSON chunk" in chat_error or "streaming response" in chat_error:
+                return DiagnosisResult(
+                    failure_class="broken_streaming",
+                    confidence=0.9,
+                    evidence=[chat_error],
+                    suspected_cause="The streaming health response was interrupted or malformed.",
+                    recommended_recipe_ids=["disable_streaming"],
+                    provider=self.name,
+                )
+            if (
+                "expected health response" in chat_error
+                or "chat response exceeded" in chat_error
+                or "hallucinated tool call" in chat_error
+            ):
+                return DiagnosisResult(
+                    failure_class="instruction_drift",
+                    confidence=0.9,
+                    evidence=[chat_error],
+                    suspected_cause="The health prompt did not force the expected sentinel-only response.",
+                    recommended_recipe_ids=["switch_prompt_template", "tighten_expected_health_response"],
+                    provider=self.name,
+                )
             return DiagnosisResult(
                 failure_class="unknown_failure",
                 confidence=0.7,
-                evidence=[f"chat completion failed: {endpoint_bits['chat'].get('error', 'unknown')}"],
+                evidence=[f"chat completion failed: {chat_error or 'unknown'}"],
                 suspected_cause="The model endpoint responded to /v1/models but did not return a valid chat completion.",
                 missing_evidence=["server logs", "provider runtime status"],
                 recommended_recipe_ids=["noop"],
                 provider=self.name,
             )
         if not checks.get("tool_call_parser", True):
+            recipes = ["set_tool_parser"]
+            if profile.runtime_type in {"ollama", "harness-test", "fake"}:
+                recipes.append("disable_tool_probe_for_weak_model")
             return DiagnosisResult(
                 failure_class="tool_parser_mismatch",
                 confidence=0.9,
                 evidence=[
                     f"tool_parser={profile.tool_parser}",
                     f"expected_tool_parser={profile.expected_tool_parser}",
-                    "deterministic tool-call check failed",
+                    f"deterministic tool-call check failed: {tool_probe.get('error', 'unknown')}",
                 ],
                 suspected_cause="Configured tool parser does not match the model/runtime expectation.",
-                recommended_recipe_ids=["set_tool_parser"],
+                recommended_recipe_ids=recipes,
                 provider=self.name,
             )
         if not checks.get("rocm_device_flags", True):
@@ -140,13 +277,19 @@ class RulesProvider:
         changes = recipe.build_changes(config) if recipe else {}
         return RepairPlan(
             recipe_id=recipe_id,
+            failure_class=diagnosis.failure_class,
+            repairable=recipe_id != "noop",
             rationale=diagnosis.suspected_cause,
             config_patch={"path": Path(evidence.config_path).name, "changes": changes},
+            template_patch={},
+            state_patch={},
             command_preview=[],
             risk_level=recipe.risk_level if recipe else "low",
             rollback=recipe.rollback_strategy if recipe else "No changes were made.",
             verification_steps=list(recipe.verification_steps) if recipe else [],
             provider=self.name,
+            expected_success_signal="verification health is healthy",
+            unrecoverable_reason="",
         )
 
 
@@ -220,6 +363,12 @@ class OpenAIResponsesProvider:
             {
                 "diagnosis": to_jsonable(diagnosis),
                 "evidence": to_jsonable(evidence),
+                "provider": to_jsonable(get_active_profile(config)),
+                "health": to_jsonable(evidence.health),
+                "previous_attempts": load_state(evidence.config_path).get("self_heal_attempts", []),
+                "learned_fixes": load_state(evidence.config_path).get("learned_fixes", {}),
+                "config": to_jsonable(config),
+                "developer_repair_mode": bool(config.get("self_healing", {}).get("developer_repair_mode", False)),
                 "recipes": {
                     recipe_id: {
                         "config_paths": list(recipe.config_paths(config)),
@@ -355,3 +504,32 @@ def _extract_output_text(payload: dict[str, Any]) -> str:
     if not chunks:
         raise ProviderError("Responses API payload had no output_text")
     return "".join(chunks)
+
+
+def _probe_status(probe: Any) -> int | None:
+    if not isinstance(probe, dict):
+        return None
+    status = probe.get("status_code")
+    if status is None:
+        return None
+    try:
+        return int(status)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rate_limit_class(probe: dict[str, Any], max_attempts: int) -> str:
+    attempts = int(probe.get("attempts", 1) or 1)
+    if attempts <= 1 and max_attempts <= 1:
+        return "one_time_rate_limit"
+    return "repeated_rate_limit"
+
+
+def _looks_like_timeout(error: str) -> bool:
+    lowered = error.casefold()
+    return "timed out" in lowered or "timeout" in lowered
+
+
+def _looks_like_template_error(error: str) -> bool:
+    lowered = error.casefold()
+    return "template render failed" in lowered or "template does not exist" in lowered

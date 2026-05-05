@@ -62,6 +62,8 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     data["service"].setdefault("restart_mode", "dry-run")
     data.setdefault("self_healing", {})
     data["self_healing"].setdefault("max_attempts", 3)
+    data["self_healing"].setdefault("fallback_model_provider", "")
+    data["self_healing"].setdefault("developer_repair_mode", False)
     data.setdefault("stress_tests", {})
     data["stress_tests"].setdefault("target_model_providers", [])
     data["stress_tests"].setdefault("timeout_seconds", 2.0)
@@ -128,7 +130,7 @@ def get_active_profile(config: dict[str, Any]) -> RuntimeProfile:
             retry_on_invalid_json=bool(retry["retry_on_invalid_json"]),
         ),
         stream=bool(request["stream"]),
-        templates={str(key): str(value) for key, value in provider["templates"].items()},
+        templates={str(key): deepcopy(value) for key, value in provider["templates"].items()},
         tool_parser=str(tool_calling["parser"]),
         expected_tool_parser=str(tool_calling["expected_parser"]),
         tool_parser_header=str(tool_calling["parser_header"]),
@@ -207,6 +209,14 @@ def _normalize_model_provider(provider_id: str, provider: Any) -> dict[str, Any]
     data.setdefault("templates", {})
     templates = data["templates"]
     templates.setdefault("health_chat", "../templates/health_chat.j2")
+    templates.setdefault(
+        "health_chat_fallbacks",
+        [
+            "../templates/health_chat.qwen_strict.j2",
+            "../templates/health_chat.no_reasoning.j2",
+            "../templates/health_chat.minimal.j2",
+        ],
+    )
     templates.setdefault("tool_call", "../templates/tool_call_prompt.j2")
 
     data.setdefault("health", {})
@@ -221,6 +231,8 @@ def _normalize_model_provider(provider_id: str, provider: Any) -> dict[str, Any]
     data["validation"].setdefault("max_health_response_chars", 120)
     data["validation"].setdefault("max_repeated_token_count", 8)
     data["validation"].setdefault("health_max_tokens", 32)
+    data["validation"].setdefault("expected_health_response", "ROCM_DOCTOR_OK")
+    data["validation"].setdefault("health_response_match", "case_insensitive")
     return data
 
 

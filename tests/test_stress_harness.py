@@ -9,7 +9,8 @@ from rocm_doctor.config import load_config
 from rocm_doctor.failure_injection import inject_failure
 from rocm_doctor.fake_endpoint import FakeOpenAIServer
 from rocm_doctor.monitor import run_check
-from rocm_doctor.operations import diagnose_config, heal_config, self_heal_config, verify_config
+from rocm_doctor.operations import check_config, diagnose_config, heal_config, self_heal_config, verify_config
+from rocm_doctor.state import load_state
 
 
 TINY_MODELS = [
@@ -48,7 +49,7 @@ def test_check_heal_verify_loop_for_qwen_and_two_small_models(tmp_path: Path, mo
 @pytest.mark.parametrize(
     "failure_mode, expected_errors",
     [
-        ("chat_invalid_json", ("invalid JSON response",)),
+        ("chat_invalid_json", ("invalid JSON response", "Remote end closed connection", "Connection reset")),
         ("empty_response", ("invalid JSON response",)),
         ("partial_response", ("invalid JSON response", "Connection reset")),
         ("chat_500", ("HTTP 500",)),
@@ -56,6 +57,8 @@ def test_check_heal_verify_loop_for_qwen_and_two_small_models(tmp_path: Path, mo
         ("slow_response", ("timed out",)),
         ("tool_wrong_name", ("unexpected tool call name",)),
         ("hallucinated_tool_call", ("hallucinated tool call",)),
+        ("empty_chat_content", ("empty chat response content",)),
+        ("instruction_drift", ("expected health response",)),
         ("repetitive_output", ("repetitive output loop detected",)),
     ],
 )
@@ -112,7 +115,23 @@ def test_streaming_interrupt_is_reported_when_streaming_is_enabled(tmp_path: Pat
         health, evidence = run_check(config_path)
 
         assert not health.healthy
-        assert "invalid JSON response" in evidence.endpoint["chat"]["error"]
+        assert "invalid streaming JSON chunk" in evidence.endpoint["chat"]["error"]
+
+
+def test_streaming_success_is_normalized_to_chat_response(tmp_path: Path) -> None:
+    with FakeOpenAIServer() as server:
+        config_path = _write_runtime_config(
+            tmp_path,
+            model_id="qwen3:0.6b",
+            base_url=server.base_url,
+            stream=True,
+            retry_attempts=1,
+        )
+
+        health, evidence = run_check(config_path)
+
+        assert health.healthy
+        assert evidence.endpoint["chat"]["response"]["choices"][0]["message"]["content"] == "ROCM_DOCTOR_OK"
 
 
 def test_context_tool_rocm_and_safety_failure_recovery(tmp_path: Path) -> None:
@@ -176,7 +195,126 @@ def test_self_healing_recovers_and_reports_unrecoverable_failures(tmp_path: Path
 
         assert not result.healthy
         assert result.unrecoverable
-        assert "no deterministic changes required" in result.reason
+        assert "self-healing retry exhaustion" in result.reason
+
+
+def test_self_healing_retries_one_time_rate_limit_without_config_change(tmp_path: Path) -> None:
+    with FakeOpenAIServer(failure_mode="rate_limit_once") as server:
+        config_path = _write_runtime_config(
+            tmp_path,
+            model_id="qwen3:0.6b",
+            base_url=server.base_url,
+            retry_attempts=1,
+        )
+
+        result = self_heal_config(config_path, provider_name="rules")
+
+        assert result.healthy
+        assert result.recovered
+        assert result.repairs[0].recipe_id == "retry_without_config_change"
+        assert result.repairs[0].changed_paths == []
+
+
+def test_self_healing_tunes_qwen_empty_output_and_records_learning(tmp_path: Path) -> None:
+    with FakeOpenAIServer(failure_mode="empty_chat_content_once") as server:
+        config_path = _write_runtime_config(
+            tmp_path,
+            model_id="qwen3:0.6b",
+            base_url=server.base_url,
+        )
+
+        result = self_heal_config(config_path, provider_name="rules")
+        config = load_config(config_path)
+        provider = config["model_providers"][config["active_model_provider"]]
+        state = load_state(config_path)
+
+        assert result.healthy
+        assert result.repairs[0].recipe_id == "increase_health_max_tokens"
+        assert provider["validation"]["health_max_tokens"] == 512
+        fixes = state["learned_fixes"]["fake-openai"]["empty_qwen_output"]
+        assert fixes[0]["successful_fix"] == "increase_health_max_tokens"
+
+
+def test_self_healing_disables_broken_streaming(tmp_path: Path) -> None:
+    with FakeOpenAIServer(failure_mode="stream_interrupt") as server:
+        config_path = _write_runtime_config(
+            tmp_path,
+            model_id="qwen3:0.6b",
+            base_url=server.base_url,
+            stream=True,
+        )
+
+        result = self_heal_config(config_path, provider_name="rules")
+        config = load_config(config_path)
+        provider = config["model_providers"][config["active_model_provider"]]
+
+        assert result.healthy
+        assert result.repairs[0].recipe_id == "disable_streaming"
+        assert provider["request"]["stream"] is False
+
+
+def test_self_healing_increases_timeout_and_rolls_forward_only_after_verification(tmp_path: Path) -> None:
+    with FakeOpenAIServer(failure_mode="slow_response", slow_response_seconds=0.4) as server:
+        config_path = _write_runtime_config(
+            tmp_path,
+            model_id="qwen3:0.6b",
+            base_url=server.base_url,
+            timeout_seconds=0.1,
+        )
+
+        result = self_heal_config(config_path, provider_name="rules")
+        config = load_config(config_path)
+        provider = config["model_providers"][config["active_model_provider"]]
+
+        assert result.healthy
+        assert result.repairs[0].recipe_id == "increase_timeout"
+        assert provider["request"]["timeout_seconds"] > 0.4
+
+
+def test_self_healing_switches_bad_health_template_to_fallback(tmp_path: Path) -> None:
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir()
+    bad_template = template_dir / "bad.j2"
+    bad_template.write_text("{{ missing.value }}", encoding="utf-8")
+    with FakeOpenAIServer() as server:
+        config_path = _write_runtime_config(tmp_path, model_id="qwen3:0.6b", base_url=server.base_url)
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        provider = config["model_providers"]["fake-openai"]
+        provider["templates"]["health_chat"] = str(bad_template)
+        provider["templates"]["health_chat_fallbacks"] = [str(Path("templates/health_chat.minimal.j2").resolve())]
+        provider["capabilities"]["models"] = False
+        provider["health"]["probes"] = ["chat_completion"]
+        config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+        result = self_heal_config(config_path, provider_name="rules")
+        healed = load_config(config_path)
+
+        assert result.healthy
+        assert result.repairs[0].recipe_id == "switch_prompt_template"
+        assert healed["model_providers"]["fake-openai"]["templates"]["health_chat"].endswith(
+            "health_chat.minimal.j2"
+        )
+
+
+def test_self_healing_switches_to_fallback_provider_for_permanent_500(tmp_path: Path) -> None:
+    with FakeOpenAIServer(failure_mode="chat_500") as broken, FakeOpenAIServer() as backup:
+        config_path = _write_runtime_config(tmp_path, model_id="qwen3:0.6b", base_url=broken.base_url)
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        active = config["model_providers"]["fake-openai"]
+        backup_provider = yaml.safe_load(yaml.safe_dump(active))
+        backup_provider["model"]["endpoint"]["base_url"] = backup.base_url
+        backup_provider["model"]["endpoint"]["expected_base_url"] = backup.base_url
+        backup_provider["model"]["endpoint"]["wrong_base_url"] = "http://127.0.0.1:9/v1"
+        config["model_providers"]["backup-openai"] = backup_provider
+        config["self_healing"]["fallback_model_provider"] = "backup-openai"
+        config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+        result = self_heal_config(config_path, provider_name="rules")
+        healed = load_config(config_path)
+
+        assert result.healthy
+        assert result.repairs[0].recipe_id == "fallback_model_provider"
+        assert healed["active_model_provider"] == "backup-openai"
 
 
 def test_corrupted_state_does_not_break_self_healing(tmp_path: Path) -> None:
@@ -188,6 +326,24 @@ def test_corrupted_state_does_not_break_self_healing(tmp_path: Path) -> None:
 
         assert result.healthy
         assert not result.unrecoverable
+
+
+def test_self_healing_restores_last_known_good_config_for_invalid_config(tmp_path: Path) -> None:
+    with FakeOpenAIServer(expected_tool_parser="qwen3") as server:
+        config_path = _write_runtime_config(tmp_path, model_id="qwen3:0.6b", base_url=server.base_url)
+        health, _evidence = check_config(config_path)
+        assert health.healthy
+        config_path.write_text(
+            "version: 1\nworkspace: .\nstate_file: .state.json\nactive_model_provider: missing\nmodel_providers: {}\n",
+            encoding="utf-8",
+        )
+
+        result = self_heal_config(config_path, provider_name="rules")
+
+        assert result.healthy
+        assert result.recovered
+        assert result.repairs[0].recipe_id == "restore_last_known_good_config"
+        assert load_config(config_path)["active_model_provider"] == "fake-openai"
 
 
 def _write_runtime_config(

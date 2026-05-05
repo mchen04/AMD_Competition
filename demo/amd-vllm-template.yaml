@@ -24,6 +24,8 @@ service:
 
 self_healing:
   max_attempts: 3
+  fallback_model_provider: ""
+  developer_repair_mode: false
 
 active_model_provider: amd-vllm-mi300x
 model_providers:
@@ -63,6 +65,10 @@ model_providers:
         retry_on_invalid_json: true
     templates:
       health_chat: ../templates/health_chat.j2
+      health_chat_fallbacks:
+        - ../templates/health_chat.qwen_strict.j2
+        - ../templates/health_chat.no_reasoning.j2
+        - ../templates/health_chat.minimal.j2
       tool_call: ../templates/tool_call_prompt.j2
     health:
       probes:
@@ -85,7 +91,18 @@ model_providers:
           - missing ROCm device flags
       safe_recipes:
         - noop
+        - retry_without_config_change
         - update_endpoint_url
+        - increase_health_max_tokens
+        - lower_health_max_tokens
+        - increase_timeout
+        - increase_retry_backoff
+        - disable_streaming
+        - switch_prompt_template
+        - fallback_model_provider
+        - restore_last_known_good_config
+        - tighten_expected_health_response
+        - disable_tool_probe_for_weak_model
         - lower_max_model_len
         - set_tool_parser
         - set_rocm_device_flags
@@ -93,6 +110,8 @@ model_providers:
       max_health_response_chars: 160
       max_repeated_token_count: 8
       health_max_tokens: 32
+      expected_health_response: ROCM_DOCTOR_OK
+      health_response_match: case_insensitive
 
 diagnosis:
   active_provider: rules

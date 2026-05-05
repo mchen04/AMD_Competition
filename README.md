@@ -1,6 +1,6 @@
 # ROCm Doctor
 
-ROCm Doctor is a self-healing harness for model-serving and agent runtimes. It checks an OpenAI-compatible endpoint, diagnoses failures, applies only deterministic repair recipes, verifies recovery, and writes incident evidence.
+ROCm Doctor is a self-healing harness for model-serving and agent runtimes. It checks an OpenAI-compatible endpoint, diagnoses failures, applies only deterministic repair recipes, verifies recovery, rolls back failed repairs, and writes incident evidence.
 
 The codebase is model-agnostic and provider-agnostic: model runtime details live in YAML under `model_providers`, prompt text lives in Jinja templates, and Python code talks to providers through adapters.
 
@@ -34,9 +34,11 @@ Use a copy of the demo config when you want to mutate it repeatedly.
 
 - `rocm_doctor/config.py`: YAML loading, normalization, validation, path helpers, redaction.
 - `rocm_doctor/model_providers.py`: model-provider adapter boundary. The implemented adapter is `openai-compatible`.
-- `rocm_doctor/transport.py`: shared JSON HTTP transport, retries, rate-limit and timeout handling.
+- `rocm_doctor/transport.py`: shared HTTP transport, retries, rate-limit, timeout, JSON, and SSE streaming handling.
+- `rocm_doctor/adversarial_proxy.py`: real-backend proxy for injecting transport/protocol failures in front of local Qwen or another OpenAI-compatible runtime.
 - `rocm_doctor/templates.py`: strict Jinja template rendering.
 - `rocm_doctor/providers.py`: diagnosis/planning providers: `rules`, `fake`, optional `openai-codex`.
+- `rocm_doctor/healing_policy.py`: failure taxonomy, candidate-recipe ordering, and learned-fix lookup.
 - `rocm_doctor/recipes.py`: deterministic repair recipes and allowed config paths.
 - `rocm_doctor/executor.py`: safety gate for recipe execution.
 - `tests/`: integration and stress coverage for Qwen, two additional tiny-model profiles, malformed responses, retries, tool calls, config failures, and self-healing loops.
@@ -48,7 +50,13 @@ Use a copy of the demo config when you want to mutate it repeatedly.
 - `demo/amd-vllm-template.yaml`: AMD Developer Cloud/vLLM template with MI300X hooks.
 - `templates/*.j2`: health-check, tool-call, and OpenAI Responses diagnosis/planning templates.
 
-To add a model provider, add one entry under `model_providers`, set `active_model_provider`, and choose capabilities, endpoint URLs, context limits, retry settings, templates, health probes, and safe recipes. The core monitor and executor should not change for another OpenAI-compatible runtime.
+To add a model provider, add one entry under `model_providers`, set `active_model_provider`, and choose capabilities, endpoint URLs, context limits, retry settings, prompt template fallbacks, health probes, and safe recipes. The core monitor and executor should not change for another OpenAI-compatible runtime.
+
+## Self-Healing Behavior
+
+The `self-heal` command runs `check -> diagnose -> candidate recipes -> apply one safe recipe -> verify`. Every attempted config edit snapshots the current config first. If verification fails, ROCm Doctor restores the snapshot and tries the next safe candidate. Successful repairs are stored in the state file under `learned_fixes` so the same provider/failure signature tries the known working recipe first next time.
+
+Current deterministic recipes include endpoint repair, retry-only recovery, retry backoff tuning, timeout increases, streaming disablement, Qwen health-token tuning, prompt template fallback, strict health-response validation, weak-model tool-probe disablement, fallback-provider switching, last-known-good config restore, context-limit lowering, tool-parser correction, ROCm device flag repair, and dry-run restart accounting.
 
 ## Verification
 
@@ -64,6 +72,12 @@ ollama pull qwen3:0.6b
 ollama pull smollm2:135m
 ollama pull tinyllama:1.1b
 /tmp/rocm-doctor-venv/bin/python -m rocm_doctor check --config demo/ollama-tiny-models.yaml
+```
+
+Run the full real-Qwen adversarial suite when local Ollama is hosting `qwen3:0.6b`:
+
+```bash
+ROCM_DOCTOR_RUN_REAL_QWEN=1 /tmp/rocm-doctor-venv/bin/python -m pytest tests/test_real_qwen_adversarial.py -q -s
 ```
 
 ## AMD Readiness
