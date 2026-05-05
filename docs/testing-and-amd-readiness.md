@@ -2,7 +2,15 @@
 
 ## Test Coverage
 
-Run:
+Run the complete no-AMD validation gate:
+
+```bash
+scripts/local_validate.sh
+```
+
+This creates or reuses `/tmp/rocm-doctor-venv`, installs the package with test dependencies, runs compile and pytest checks, exercises the fake-endpoint demo on a copied config, writes an incident report, and runs the optional real-Qwen suite when Ollama is serving `qwen3:0.6b`.
+
+Manual equivalent:
 
 ```bash
 python3 -m venv /tmp/rocm-doctor-venv
@@ -10,6 +18,13 @@ python3 -m venv /tmp/rocm-doctor-venv
 /tmp/rocm-doctor-venv/bin/python -m compileall rocm_doctor tests
 /tmp/rocm-doctor-venv/bin/python -m pytest -q
 ```
+
+Latest local validation without AMD credits:
+
+- Deterministic suite: `40 passed, 19 skipped`.
+- Real local Qwen suite: `19 passed`.
+- Fake endpoint demo/report path: passed.
+- AMD MI300X/vLLM path: not run because GPU credits are unavailable.
 
 The default pytest suite uses a real in-process HTTP endpoint rather than mocked-only provider calls. It exercises the same OpenAI-compatible adapter path for:
 
@@ -20,6 +35,8 @@ The default pytest suite uses a real in-process HTTP endpoint rather than mocked
 Covered failure classes include malformed JSON, empty responses, empty model content, partial responses, HTTP 500, HTTP 429, one-time rate limits, repeated rate limits, timeout, retry recovery, retry exhaustion, context-length failure, tool-call parser mismatch, wrong tool-call name, hallucinated tool calls, instruction drift, streaming interruption, repetitive output loops, corrupted state, invalid config, bad template rendering, unknown recipes, unsafe commands, path traversal, and credential edits.
 
 The deterministic self-healing tests assert full detect-heal-verify behavior for retry-only recovery, `health_max_tokens` tuning, timeout tuning, streaming disablement, prompt-template fallback, fallback-provider switching, rollback after failed repairs, and learned-fix state recording.
+
+The report path is covered as part of local validation. After `self-heal`, generated reports include diagnosis, repair recipe, verification status, and before/after evidence.
 
 The optional real-Qwen suite puts an adversarial proxy in front of local Ollama. Healthy requests are forwarded to `qwen3:0.6b`; transport/protocol failures are injected at the proxy boundary; prompt-level adversarial probes are answered by Qwen itself.
 
@@ -64,6 +81,11 @@ ollama pull tinyllama:1.1b
 ```
 
 Switch `active_model_provider` to test each configured tiny model.
+
+Observed local behavior:
+
+- `qwen3:0.6b` passes direct health checks and the real-Qwen adversarial suite.
+- `smollm2:135m` and `tinyllama:1.1b` are reachable but fail strict health validation by over-answering. Minimal sentinel prompts and existing self-heal prompt fallbacks do not currently recover them, so treat them as weak-model rejection evidence rather than submission blockers.
 
 ## AMD Hooks
 

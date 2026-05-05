@@ -103,6 +103,7 @@ def self_heal_config(config_path: str | Path, provider_name: str = "rules") -> S
     last_verification: VerificationResult | None = None
     last_reason = ""
     completed_attempts = 0
+    attempted_candidates: set[tuple[str, str, str]] = set()
 
     for attempt in range(1, max_attempts + 1):
         completed_attempts = attempt
@@ -143,11 +144,16 @@ def self_heal_config(config_path: str | Path, provider_name: str = "rules") -> S
             return result
 
         state = load_state(config_path)
-        candidates = candidate_recipe_ids(diagnosis, evidence, config, state)
+        signature = failure_signature(diagnosis, evidence)
+        candidates = [
+            recipe_id
+            for recipe_id in candidate_recipe_ids(diagnosis, evidence, config, state)
+            if (diagnosis.failure_class, signature, recipe_id) not in attempted_candidates
+        ]
         attempt_record = {
             "failure_class": diagnosis.failure_class,
             "candidate_recipe_ids": candidates,
-            "signature": failure_signature(diagnosis, evidence),
+            "signature": signature,
         }
         previous_attempts = state.get("self_heal_attempts", [])
         if not isinstance(previous_attempts, list):
@@ -163,6 +169,7 @@ def self_heal_config(config_path: str | Path, provider_name: str = "rules") -> S
             break
 
         for recipe_id in candidates:
+            attempted_candidates.add((diagnosis.failure_class, signature, recipe_id))
             snapshot = deepcopy(load_config(config_path))
             record_stage(config_path, "repair_snapshot", redact_config(snapshot))
             plan = repair_plan_for_recipe(recipe_id, diagnosis, evidence, snapshot, provider_name)
@@ -170,6 +177,7 @@ def self_heal_config(config_path: str | Path, provider_name: str = "rules") -> S
             repair = execute_plan(config_path, plan)
             repair.failure_class = diagnosis.failure_class
             repairs.append(repair)
+            record_stage(config_path, "repair", repair)
             last_reason = repair.reason
             if repair.rejected:
                 continue
@@ -179,7 +187,6 @@ def self_heal_config(config_path: str | Path, provider_name: str = "rules") -> S
             if last_verification.healthy:
                 final_config = load_config(config_path)
                 changed_values = applied_values(final_config, repair.changed_paths)
-                signature = failure_signature(diagnosis, evidence)
                 record_successful_fix(
                     config_path,
                     failed_provider_id,
@@ -197,6 +204,7 @@ def self_heal_config(config_path: str | Path, provider_name: str = "rules") -> S
                     repairs=repairs,
                     final_verification=last_verification,
                 )
+                record_stage(config_path, "repair", repair)
                 record_stage(config_path, "self_heal", result)
                 return result
 
@@ -205,6 +213,7 @@ def self_heal_config(config_path: str | Path, provider_name: str = "rules") -> S
                 repair.rolled_back = True
                 repair.after = redact_config(load_config(config_path))
                 repair.rollback = repair.rollback or "Restored the pre-repair config snapshot."
+                record_stage(config_path, "repair", repair)
             last_reason = last_verification.message or repair.reason
 
     result = SelfHealResult(

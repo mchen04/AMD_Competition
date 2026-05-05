@@ -17,12 +17,19 @@ Do not create a GPU Droplet until credits are visible or the team deliberately d
 2. Complete the **Action Needed** item by updating project information.
 3. Open **Billing** or **My AMD Home** and verify that AMD credits are visible.
 4. Add an SSH key to the DigitalOcean account.
-5. Confirm the local ROCm Doctor demo loop works without a GPU:
-   - health check fails/passes deterministically
-   - diagnosis returns a specific failure class
-   - repair plan is shown
-   - verification reruns
-   - incident report is generated
+5. Confirm the local ROCm Doctor demo loop works without a GPU by running:
+
+```bash
+scripts/local_validate.sh
+```
+
+The local gate should prove:
+
+- health check fails/passes deterministically
+- diagnosis returns a specific failure class
+- deterministic repair is applied
+- verification reruns
+- incident report includes diagnosis, repair, verification, and before/after evidence
 
 ## Create The GPU Droplet
 

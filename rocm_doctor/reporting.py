@@ -12,7 +12,7 @@ from .timeutil import utc_now
 
 def generate_report(config_path: str | Path) -> tuple[IncidentReport, Path]:
     config = load_config(config_path)
-    state = load_state(config_path)
+    state = _report_state(load_state(config_path))
     created_at = utc_now()
     incident_id = created_at.replace(":", "").replace("-", "").replace("Z", "Z")
     reports_dir = resolve_reports_dir(config_path, config)
@@ -35,15 +35,40 @@ def generate_report(config_path: str | Path) -> tuple[IncidentReport, Path]:
         incident_id=incident_id,
         created_at=created_at,
         config_path=str(config_path),
-        diagnosis=None,
-        repair=None,
-        verification=None,
-        before_evidence=None,
-        after_evidence=None,
+        diagnosis=state.get("diagnosis"),
+        repair=state.get("repair"),
+        verification=state.get("verification"),
+        before_evidence=state.get("before_evidence"),
+        after_evidence=state.get("after_evidence"),
         report_path=str(path),
     )
     record_stage(config_path, "last_report", {"markdown": str(path), "json": str(json_path)})
     return report, path
+
+
+def _report_state(state: dict[str, Any]) -> dict[str, Any]:
+    report_state = dict(state)
+    self_heal = report_state.get("self_heal")
+    if not isinstance(self_heal, dict):
+        return report_state
+
+    repairs = self_heal.get("repairs")
+    if not report_state.get("repair") and isinstance(repairs, list) and repairs:
+        last_repair = repairs[-1]
+        if isinstance(last_repair, dict):
+            report_state["repair"] = last_repair
+
+    final_verification = self_heal.get("final_verification")
+    if not report_state.get("verification") and isinstance(final_verification, dict):
+        report_state["verification"] = final_verification
+
+    verification = report_state.get("verification")
+    if not report_state.get("after_evidence") and isinstance(verification, dict):
+        evidence = verification.get("evidence")
+        if isinstance(evidence, dict):
+            report_state["after_evidence"] = evidence
+
+    return report_state
 
 
 def _markdown(incident_id: str, created_at: str, config_path: str | Path, state: dict[str, Any]) -> str:

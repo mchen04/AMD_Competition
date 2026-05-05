@@ -39,11 +39,11 @@ Diagnosis providers may return structured diagnoses and repair plans, but the ex
 
 The policy covers endpoint errors, one-time and repeated rate limits, timeouts, empty Qwen output, instruction drift, repetitive loops, broken streaming, bad templates, permanent provider 500s, invalid config, context limits, tool parser mismatch, and missing ROCm device flags.
 
-For each candidate, `self-heal` snapshots the normalized config, applies one deterministic recipe through the executor, verifies the health check, and keeps the edit only if verification passes. Failed edits are rolled back before the next recipe is tried. Successful repairs are recorded in the configured state file under `learned_fixes`.
+For each candidate, `self-heal` snapshots the normalized config, applies one deterministic recipe through the executor, verifies the health check, and keeps the edit only if verification passes. Failed edits are rolled back before the next recipe is tried. The loop does not keep retrying the same recipe for the same failure signature. Successful repairs are recorded in the configured state file under `learned_fixes`.
 
 ## Templates
 
-Templates live in `templates/*.j2` and render with `StrictUndefined`.
+Templates live in `templates/*.j2` and render with `StrictUndefined`. Template paths are resolved relative to the active config first; copied demo configs can also resolve bundled `templates/...` references back to the repository template directory.
 
 - `health_chat.j2`: prompt for chat health.
 - `health_chat.qwen_strict.j2`, `health_chat.no_reasoning.j2`, `health_chat.minimal.j2`: fallback health prompts for Qwen drift, loops, empty output, or bad template recovery.
@@ -52,6 +52,10 @@ Templates live in `templates/*.j2` and render with `StrictUndefined`.
 - `openai_repair_system.j2`: dynamic system instructions for optional OpenAI repair planning, including provider context, health evidence, previous attempts, learned fixes, allowed edit scope, rollback, and safety rules.
 
 Bad template paths or render errors are reported as health or provider failures instead of crashing the harness.
+
+## Incident Reports
+
+The `report` command reads the persisted state from the latest check, diagnosis, repair, verification, or `self-heal` run. Reports include the active model provider, adapter, runtime type, skipped checks, failure class, diagnosis provider, suspected cause, repair recipe, repair status, verification health, and stable before/after evidence.
 
 ## Real-Backend Adversarial Proxy
 

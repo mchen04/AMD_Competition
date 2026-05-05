@@ -23,14 +23,15 @@ Use this as the lablab submission prep list.
 - Root README explains the project in under one minute.
 - `docs/` contains setup, demo, and submission docs.
 - Local demo can run without AMD GPU credits.
+- `scripts/local_validate.sh` passes before recording or submitting.
 - AMD cloud setup is documented separately.
 - Failure injection scripts are repeatable.
-- Generated reports are saved under a predictable folder.
+- Generated reports are saved under a predictable folder and include diagnosis, repair, verification, and before/after evidence.
 
 ## Demo Video Outline
 
 1. Show ROCm Doctor project title and one-sentence purpose.
-2. Show a healthy model/agent check.
+2. Show the no-AMD local validation path or a healthy model/agent check.
 3. Inject one controlled failure.
 4. Run diagnosis and highlight the root cause.
 5. If available, show the same evidence through the optional Codex/OpenAI provider.
@@ -42,6 +43,7 @@ Use this as the lablab submission prep list.
 ## Final Polish
 
 - Include screenshots of AMD Developer Cloud / MI300X evidence if available.
+- If AMD credits are unavailable, say explicitly that local fake-endpoint and real local Qwen validation passed, while MI300X/vLLM remains the final cloud proof.
 - Keep the video under three minutes unless rules allow more.
 - Make the final report readable in plain English.
 - Mention that the project targets real ROCm/vLLM deployment failure modes, not toy chatbot behavior.

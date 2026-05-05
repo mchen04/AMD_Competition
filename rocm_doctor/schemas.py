@@ -213,11 +213,11 @@ class IncidentReport:
     incident_id: str
     created_at: str
     config_path: str
-    diagnosis: DiagnosisResult | None
-    repair: RepairResult | None
-    verification: VerificationResult | None
-    before_evidence: EvidenceBundle | None
-    after_evidence: EvidenceBundle | None
+    diagnosis: DiagnosisResult | dict[str, Any] | None
+    repair: RepairResult | dict[str, Any] | None
+    verification: VerificationResult | dict[str, Any] | None
+    before_evidence: EvidenceBundle | dict[str, Any] | None
+    after_evidence: EvidenceBundle | dict[str, Any] | None
     report_path: str = ""
 
 

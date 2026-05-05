@@ -30,6 +30,14 @@ Run the harness in another terminal:
 
 Use a copy of the demo config when you want to mutate it repeatedly.
 
+Run the full no-AMD local validation path:
+
+```bash
+scripts/local_validate.sh
+```
+
+This creates or reuses `/tmp/rocm-doctor-venv`, runs compile and pytest checks, exercises the fake-endpoint demo loop on a copied config, writes an incident report, and runs the optional real-Qwen suite when local Ollama is serving `qwen3:0.6b`.
+
 ## Core Files
 
 - `rocm_doctor/config.py`: YAML loading, normalization, validation, path helpers, redaction.
@@ -60,6 +68,14 @@ Current deterministic recipes include endpoint repair, retry-only recovery, retr
 
 ## Verification
 
+Run the complete no-AMD local validation path:
+
+```bash
+scripts/local_validate.sh
+```
+
+Manual deterministic checks:
+
 ```bash
 /tmp/rocm-doctor-venv/bin/python -m compileall rocm_doctor tests
 /tmp/rocm-doctor-venv/bin/python -m pytest -q
@@ -73,6 +89,8 @@ ollama pull smollm2:135m
 ollama pull tinyllama:1.1b
 /tmp/rocm-doctor-venv/bin/python -m rocm_doctor check --config demo/ollama-tiny-models.yaml
 ```
+
+`qwen3:0.6b` is the primary local model proof path. `smollm2:135m` and `tinyllama:1.1b` are intentionally useful as weak-model rejection checks when they over-answer the strict health sentinel.
 
 Run the full real-Qwen adversarial suite when local Ollama is hosting `qwen3:0.6b`:
 

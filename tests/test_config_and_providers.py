@@ -8,6 +8,7 @@ import yaml
 from rocm_doctor.config import ConfigError, get_active_profile, load_config
 from rocm_doctor.providers import diagnose_with_provider
 from rocm_doctor.schemas import HealthCheckResult, EvidenceBundle
+from rocm_doctor.templates import render_template
 
 
 def test_yaml_config_loads_model_provider_profile() -> None:
@@ -90,6 +91,22 @@ def test_bad_template_rendering_is_reported(tmp_path: Path) -> None:
 
     assert not health.healthy
     assert "template render failed" in evidence.endpoint["chat"]["error"]
+
+
+def test_demo_template_paths_survive_tmp_config_copy(tmp_path: Path) -> None:
+    config_path = tmp_path / "rocm-doctor.yaml"
+    config_path.write_text(Path("demo/rocm-doctor.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+
+    rendered = render_template(
+        config_path,
+        "../templates/health_chat.j2",
+        {
+            "provider": {"runtime_type": "fake"},
+            "model": {"id": "fake-qwen3"},
+        },
+    )
+
+    assert rendered == "Return exactly ROCM_DOCTOR_OK for fake-qwen3. No explanation. No extra text."
 
 
 def _write_config(tmp_path: Path, base_url: str) -> Path:

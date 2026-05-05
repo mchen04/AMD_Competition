@@ -10,6 +10,7 @@ from rocm_doctor.failure_injection import inject_failure
 from rocm_doctor.fake_endpoint import FakeOpenAIServer
 from rocm_doctor.monitor import run_check
 from rocm_doctor.operations import check_config, diagnose_config, heal_config, self_heal_config, verify_config
+from rocm_doctor.reporting import generate_report
 from rocm_doctor.state import load_state
 
 
@@ -196,6 +197,27 @@ def test_self_healing_recovers_and_reports_unrecoverable_failures(tmp_path: Path
         assert not result.healthy
         assert result.unrecoverable
         assert "self-healing retry exhaustion" in result.reason
+        recipe_ids = [repair.recipe_id for repair in result.repairs]
+        assert len(recipe_ids) == len(set(recipe_ids))
+
+
+def test_report_includes_self_heal_repair_and_verification(tmp_path: Path) -> None:
+    with FakeOpenAIServer(expected_tool_parser="qwen3") as server:
+        config_path = _write_runtime_config(tmp_path, model_id="qwen3:0.6b", base_url=server.base_url)
+        inject_failure(config_path, "wrong_endpoint_port")
+
+        result = self_heal_config(config_path, provider_name="rules")
+        report, report_path = generate_report(config_path)
+        markdown = report_path.read_text(encoding="utf-8")
+
+        assert result.healthy
+        assert report.diagnosis["failure_class"] == "wrong_endpoint_port"  # type: ignore[index]
+        assert report.repair["recipe_id"] == "update_endpoint_url"  # type: ignore[index]
+        assert report.verification["healthy"] is True  # type: ignore[index]
+        assert report.after_evidence["health"]["healthy"] is True  # type: ignore[index]
+        assert "Failure class: `wrong_endpoint_port`" in markdown
+        assert "Repair recipe: `update_endpoint_url`" in markdown
+        assert "Verification healthy: `True`" in markdown
 
 
 def test_self_healing_retries_one_time_rate_limit_without_config_change(tmp_path: Path) -> None:

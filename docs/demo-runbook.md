@@ -2,6 +2,16 @@
 
 ## Local Loop
 
+For the complete no-AMD validation path, run:
+
+```bash
+scripts/local_validate.sh
+```
+
+The script runs the test suite, exercises the fake endpoint demo on a copied config, writes an incident report, and runs the real-Qwen local suite when Ollama is available.
+
+Current no-AMD validation status: deterministic tests, copied-config fake endpoint demo, incident report generation, and real local Qwen all pass. AMD MI300X/vLLM validation still requires cloud credits.
+
 Start the fake endpoint:
 
 ```bash
@@ -13,6 +23,8 @@ Use a copied config if you do not want to mutate the checked-in demo file:
 ```bash
 cp demo/rocm-doctor.yaml /tmp/rocm-doctor-demo.yaml
 ```
+
+Copied configs are supported. Relative references to bundled `templates/*.j2` still resolve back to the repo templates.
 
 Run the loop:
 

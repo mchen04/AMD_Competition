@@ -20,12 +20,20 @@ The current implementation is local-first and provider-agnostic. It validates th
 ## Demo Scope
 
 - Local fake endpoint for zero-cost repeatability.
-- Qwen and two extra tiny-model profiles for constrained-model validation.
+- Real local `qwen3:0.6b` validation through Ollama when available.
+- `smollm2:135m` and `tinyllama:1.1b` profiles as constrained-model rejection checks.
 - Optional OpenAI Responses diagnosis provider when `OPENAI_API_KEY` is present.
 - AMD/vLLM path documented but not hardcoded.
 
+## Current Local Status
+
+- The no-AMD validation gate is `scripts/local_validate.sh`.
+- The deterministic local suite passes through the project venv.
+- The fake endpoint demo path works on a copied `/tmp` config: healthy check, `wrong_endpoint_port` injection, rules-driven `self-heal`, verification, and incident report generation.
+- Local Ollama `qwen3:0.6b` passes direct health checks and the real-Qwen adversarial suite when installed.
+- `smollm2:135m` and `tinyllama:1.1b` are useful negative controls: they are reachable but currently fail strict sentinel health validation by over-answering.
+
 ## Remaining Work
 
-- Run the real Ollama tiny-model checks on machines with those models installed.
-- Add a concrete MI300X/vLLM model provider entry after endpoint details are known.
+- Add a concrete MI300X/vLLM model provider entry after endpoint details and credits are known.
 - Record final hackathon demo once AMD credits and deployment constraints are confirmed.
