@@ -1,0 +1,78 @@
+{
+  "workspace": ".",
+  "reports_dir": "reports",
+  "state_file": ".rocm-doctor-state.json",
+  "active_profile": "ollama-qwen",
+  "model": {
+    "name": "qwen3:0.6b",
+    "base_url": "http://127.0.0.1:11434/v1",
+    "expected_base_url": "http://127.0.0.1:11434/v1",
+    "wrong_base_url": "http://127.0.0.1:11435/v1",
+    "max_model_len": 1024,
+    "safe_max_model_len": 2048,
+    "tool_parser": "",
+    "expected_tool_parser": "",
+    "tool_check_enabled": false
+  },
+  "launch": {
+    "device_flags": [],
+    "required_device_flags": []
+  },
+  "service": {
+    "name": "ollama",
+    "restart_count": 0,
+    "restart_mode": "external"
+  },
+  "provider": {
+    "fake": {
+      "mode": "normal"
+    }
+  },
+  "profiles": {
+    "ollama-qwen": {
+      "id": "ollama-qwen",
+      "runtime_type": "ollama",
+      "endpoint_protocol": "openai-compatible",
+      "model_name": "qwen3:0.6b",
+      "capabilities": {
+        "models": true,
+        "chat_completions": true,
+        "tool_calls": false,
+        "context_length": true,
+        "rocm_device_flags": false,
+        "restart": false
+      },
+      "context": {
+        "safe_max_model_len": 2048
+      },
+      "request_timeout_seconds": 30.0,
+      "tool_calling": {
+        "expected_parser": ""
+      },
+      "health_probes": [
+        "endpoint_models",
+        "chat_completion",
+        "context_length"
+      ],
+      "known_failure_signatures": {
+        "wrong_endpoint_port": [
+          "GET /v1/models failed",
+          "configured URL differs from expected URL"
+        ],
+        "context_length_too_large": [
+          "max_model_len exceeds safe_max_model_len"
+        ]
+      },
+      "safe_repair_recipes": [
+        "noop",
+        "update_endpoint_url",
+        "lower_max_model_len"
+      ],
+      "skip_reasons": {
+        "tool_calls": "ollama-qwen profile does not require native OpenAI tool-call output",
+        "rocm_device_flags": "local Ollama does not use ROCm container device flags",
+        "restart": "ROCm Doctor does not control the local Ollama service"
+      }
+    }
+  }
+}

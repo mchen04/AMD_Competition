@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.DS_Store
+.env
+.env.*
+.venv/
+venv/
+*.log
+*.tmp
+demo/reports/
+demo/.rocm-doctor-state.json
