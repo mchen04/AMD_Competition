@@ -45,4 +45,4 @@ Use this as the lablab submission prep list.
 - Keep the video under three minutes unless rules allow more.
 - Make the final report readable in plain English.
 - Mention that the project targets real ROCm/vLLM deployment failure modes, not toy chatbot behavior.
-- Make clear that model providers can diagnose and plan, while the harness controls execution and verification.
+- Make clear that diagnosis providers can classify and plan, while the harness controls execution and verification.

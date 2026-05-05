@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from .config import get_active_profile
+from .config import ConfigError, get_active_profile, get_diagnosis_provider_config
 from .recipes import RECIPE_REGISTRY
 from .schemas import (
     DIAGNOSIS_JSON_SCHEMA,
@@ -15,11 +13,14 @@ from .schemas import (
     DiagnosisResult,
     EvidenceBundle,
     RepairPlan,
+    RetryPolicy,
     SchemaError,
     provider_output_invalid,
     provider_skipped,
     to_jsonable,
 )
+from .templates import TemplateRenderError, render_template
+from .transport import request_json
 
 
 class ProviderError(RuntimeError):
@@ -43,11 +44,11 @@ class Provider(Protocol):
 
 
 class RulesProvider:
-    name = "rules"
+    def __init__(self, name: str = "rules") -> None:
+        self.name = name
 
     def diagnose(self, evidence: EvidenceBundle, config: dict[str, Any]) -> DiagnosisResult:
         checks = evidence.health.checks
-        model = config["model"]
         profile = get_active_profile(config)
         endpoint_bits = evidence.endpoint
         if not checks.get("endpoint_models", False):
@@ -59,9 +60,9 @@ class RulesProvider:
                     confidence=0.95,
                     evidence=[
                         f"GET /v1/models failed for {configured}",
-                        f"expected demo endpoint is {expected}",
+                        f"expected endpoint is {expected}",
                     ],
-                    suspected_cause="Configured endpoint URL does not match the active demo endpoint.",
+                    suspected_cause="Configured endpoint URL does not match the expected endpoint.",
                     recommended_recipe_ids=["update_endpoint_url"],
                     provider=self.name,
                 )
@@ -82,7 +83,7 @@ class RulesProvider:
                     f"max_model_len={profile.max_model_len}",
                     f"safe_max_model_len={profile.safe_max_model_len}",
                 ],
-                suspected_cause="Launch config requests a context length above the local/demo safety threshold.",
+                suspected_cause="Configured context length is above the active provider safety threshold.",
                 recommended_recipe_ids=["lower_max_model_len"],
                 provider=self.name,
             )
@@ -103,7 +104,7 @@ class RulesProvider:
                 evidence=[
                     f"tool_parser={profile.tool_parser}",
                     f"expected_tool_parser={profile.expected_tool_parser}",
-                    "deterministic tool-call smoke check failed",
+                    "deterministic tool-call check failed",
                 ],
                 suspected_cause="Configured tool parser does not match the model/runtime expectation.",
                 recommended_recipe_ids=["set_tool_parser"],
@@ -117,7 +118,7 @@ class RulesProvider:
                     "missing required ROCm launch flags: "
                     + ", ".join(evidence.endpoint.get("missing_rocm_device_flags", []))
                 ],
-                suspected_cause="The demo launch config does not mount required ROCm device nodes.",
+                suspected_cause="The launch config does not mount required ROCm device nodes.",
                 recommended_recipe_ids=["set_rocm_device_flags"],
                 provider=self.name,
             )
@@ -150,13 +151,13 @@ class RulesProvider:
 
 
 class FakeProvider:
-    name = "fake"
-
-    def __init__(self) -> None:
-        self._rules = RulesProvider()
+    def __init__(self, name: str, spec: dict[str, Any]) -> None:
+        self.name = name
+        self.spec = spec
+        self._rules = RulesProvider(name)
 
     def diagnose(self, evidence: EvidenceBundle, config: dict[str, Any]) -> DiagnosisResult | Mapping[str, Any]:
-        mode = _fake_mode(config)
+        mode = self._mode()
         if mode == "invalid_schema":
             return {"failure_class": "tool_parser_mismatch"}
         diagnosis = self._rules.diagnose(evidence, config)
@@ -166,7 +167,7 @@ class FakeProvider:
     def plan(
         self, diagnosis: DiagnosisResult, evidence: EvidenceBundle, config: dict[str, Any]
     ) -> RepairPlan | Mapping[str, Any]:
-        mode = _fake_mode(config)
+        mode = self._mode()
         plan = self._rules.plan(diagnosis, evidence, config)
         plan.provider = self.name
         if mode == "unknown_recipe":
@@ -176,7 +177,7 @@ class FakeProvider:
             plan.command_preview = ["rm -rf /tmp/rocm-doctor-demo"]
             return plan
         if mode == "path_traversal":
-            plan.config_patch["path"] = "../outside.json"
+            plan.config_patch["path"] = "../outside.yaml"
             return plan
         if mode == "credential_modification":
             plan.config_patch["changes"] = {"credentials.openai_api_key": "not-allowed"}
@@ -185,26 +186,26 @@ class FakeProvider:
             return {"recipe_id": "set_tool_parser"}
         return plan
 
+    def _mode(self) -> str:
+        return str(self.spec.get("mode", "normal"))
 
-class DelegatingProvider(RulesProvider):
-    def __init__(self, name: str) -> None:
+
+class OpenAIResponsesProvider:
+    def __init__(self, name: str, spec: dict[str, Any]) -> None:
         self.name = name
-
-
-class OpenAICodexProvider:
-    name = "openai-codex"
-
-    def __init__(self) -> None:
-        self.api_key = os.environ.get("OPENAI_API_KEY")
-        self.model = os.environ.get("ROCM_DOCTOR_OPENAI_MODEL", "gpt-5.3-codex")
+        self.spec = spec
+        self.api_key = os.environ.get(str(spec["api_key_env"]))
+        model_env = os.environ.get(str(spec.get("model_env", "")))
+        self.model = model_env or str(spec["model"])
         if not self.api_key:
-            raise OptionalProviderUnavailable("OPENAI_API_KEY is absent")
+            raise OptionalProviderUnavailable(f"{spec['api_key_env']} is absent")
 
     def diagnose(self, evidence: EvidenceBundle, config: dict[str, Any]) -> DiagnosisResult:
         payload = self._structured_request(
+            evidence,
             "rocm_doctor_diagnosis",
             DIAGNOSIS_JSON_SCHEMA,
-            "Classify this ROCm Doctor evidence. Return only the requested structured diagnosis.",
+            self.spec["templates"]["diagnosis_system"],
             {"evidence": to_jsonable(evidence), "known_recipes": sorted(RECIPE_REGISTRY)},
         )
         payload["provider"] = self.name
@@ -212,20 +213,16 @@ class OpenAICodexProvider:
 
     def plan(self, diagnosis: DiagnosisResult, evidence: EvidenceBundle, config: dict[str, Any]) -> RepairPlan:
         payload = self._structured_request(
+            evidence,
             "rocm_doctor_repair_plan",
             REPAIR_PLAN_JSON_SCHEMA,
-            (
-                "Choose one known deterministic ROCm Doctor repair recipe. Do not include shell "
-                "commands. Set config_patch.path to the active config filename and "
-                "config_patch.changes to an empty object; the harness executor computes the "
-                "deterministic patch. Return only the requested structured repair plan."
-            ),
+            self.spec["templates"]["repair_system"],
             {
                 "diagnosis": to_jsonable(diagnosis),
                 "evidence": to_jsonable(evidence),
                 "recipes": {
                     recipe_id: {
-                        "config_paths": list(recipe.config_paths),
+                        "config_paths": list(recipe.config_paths(config)),
                         "risk_level": recipe.risk_level,
                         "supported_failure_classes": list(recipe.supported_failure_classes),
                     }
@@ -237,8 +234,21 @@ class OpenAICodexProvider:
         return RepairPlan.from_mapping(payload, provider=self.name)
 
     def _structured_request(
-        self, name: str, schema: dict[str, Any], instructions: str, data: dict[str, Any]
+        self,
+        evidence: EvidenceBundle,
+        name: str,
+        schema: dict[str, Any],
+        template_ref: str,
+        data: dict[str, Any],
     ) -> dict[str, Any]:
+        try:
+            instructions = render_template(
+                evidence.config_path,
+                template_ref,
+                {"provider_name": self.name, "schema_name": name, "data": data},
+            )
+        except TemplateRenderError as exc:
+            raise ProviderError(str(exc)) from exc
         body = {
             "model": self.model,
             "input": [
@@ -256,29 +266,21 @@ class OpenAICodexProvider:
             "reasoning": {"effort": "low"},
             "store": False,
         }
-        request = urllib.request.Request(
-            "https://api.openai.com/v1/responses",
-            data=json.dumps(body).encode("utf-8"),
-            method="POST",
+        retry = _retry_from_spec(self.spec["retry"])
+        result = request_json(
+            "POST",
+            str(self.spec["endpoint"]),
+            payload=body,
+            timeout=float(self.spec["timeout_seconds"]),
+            retry=retry,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
-                "Accept": "application/json",
             },
         )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                parsed = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            try:
-                body = exc.read().decode("utf-8")
-            except OSError:
-                body = ""
-            detail = body[:1000] if body else str(exc)
-            raise ProviderError(f"OpenAI Responses API request failed: HTTP {exc.code}: {detail}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            raise ProviderError(f"OpenAI Responses API request failed: {exc}") from exc
-        text = _extract_output_text(parsed)
+        if not result.ok:
+            raise ProviderError(f"Responses API request failed: {result.error}: {result.raw or result.payload}")
+        text = _extract_output_text(result.payload)
         try:
             value = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -288,21 +290,24 @@ class OpenAICodexProvider:
         return value
 
 
-def get_provider(name: str) -> Provider:
-    if name == "rules":
-        return RulesProvider()
-    if name == "fake":
-        return FakeProvider()
-    if name == "openai-codex":
-        return OpenAICodexProvider()
-    if name in {"ollama-qwen", "vllm-amd"}:
-        return DelegatingProvider(name)
-    raise ProviderError(f"unknown provider: {name}")
+def get_provider(name: str, config: dict[str, Any]) -> Provider:
+    try:
+        spec = get_diagnosis_provider_config(config, name)
+    except ConfigError as exc:
+        raise ProviderError(str(exc)) from exc
+    provider_type = str(spec.get("type", name))
+    if provider_type == "rules":
+        return RulesProvider(name)
+    if provider_type == "fake":
+        return FakeProvider(name, spec)
+    if provider_type == "openai-responses":
+        return OpenAIResponsesProvider(name, spec)
+    raise ProviderError(f"unknown diagnosis provider type: {provider_type}")
 
 
 def diagnose_with_provider(name: str, evidence: EvidenceBundle, config: dict[str, Any]) -> DiagnosisResult:
     try:
-        provider = get_provider(name)
+        provider = get_provider(name, config)
         raw = provider.diagnose(evidence, config)
         if isinstance(raw, DiagnosisResult):
             return raw
@@ -317,7 +322,7 @@ def plan_with_provider(
     name: str, diagnosis: DiagnosisResult, evidence: EvidenceBundle, config: dict[str, Any]
 ) -> RepairPlan:
     try:
-        provider = get_provider(name)
+        provider = get_provider(name, config)
         raw = provider.plan(diagnosis, evidence, config)
     except OptionalProviderUnavailable as exc:
         raise ProviderError(str(exc)) from exc
@@ -329,11 +334,14 @@ def plan_with_provider(
         raise ProviderError(f"provider repair plan invalid: {exc}") from exc
 
 
-def _fake_mode(config: dict[str, Any]) -> str:
-    fake = config.get("provider", {}).get("fake", {})
-    if isinstance(fake, dict):
-        return str(fake.get("mode", "normal"))
-    return "normal"
+def _retry_from_spec(spec: dict[str, Any]) -> RetryPolicy:
+    return RetryPolicy(
+        max_attempts=int(spec["max_attempts"]),
+        backoff_seconds=float(spec["backoff_seconds"]),
+        retry_status_codes=[int(item) for item in spec["retry_status_codes"]],
+        retry_on_timeout=bool(spec["retry_on_timeout"]),
+        retry_on_invalid_json=bool(spec["retry_on_invalid_json"]),
+    )
 
 
 def _extract_output_text(payload: dict[str, Any]) -> str:

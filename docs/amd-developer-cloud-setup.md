@@ -77,10 +77,21 @@ The cloud VM only needs to prove the AMD-specific path:
 
 The broader check/diagnose/heal/report loop should be developed locally before spending GPU time.
 
+## ROCm Doctor Config Hooks
+
+Add an AMD/vLLM entry under `model_providers` instead of editing core code. Set:
+
+- `runtime_type: amd-vllm`
+- OpenAI-compatible vLLM `model.endpoint.base_url`
+- model id and context limits for the served model
+- `capabilities.rocm_device_flags: true`
+- `launch.required_device_flags: ["/dev/kfd", "/dev/dri"]`
+- conservative timeout and retry settings for the remote endpoint
+- AMD benchmark metadata under `hardware.amd`
+
 ## References
 
 - AMD Developer Cloud: https://www.amd.com/en/developer/resources/cloud-access/amd-developer-cloud.html
 - AMD getting started guide: https://www.amd.com/en/developer/resources/technical-articles/2025/how-to-get-started-on-the-amd-developer-cloud-.html
 - DigitalOcean GPU Droplets: https://docs.digitalocean.com/products/gpu-droplets/
 - DigitalOcean GPU setup: https://docs.digitalocean.com/products/droplets/getting-started/recommended-gpu-setup/
-

@@ -1,0 +1,168 @@
+version: 1
+workspace: .
+reports_dir: reports
+state_file: .rocm-doctor-state.json
+
+hardware:
+  backend: local
+  accelerator: cpu-or-available-gpu
+  runtime: ollama
+  deployment_target: developer-laptop
+  amd:
+    rocm_required: false
+    device_flags: []
+    benchmark_profile: tiny-local
+
+launch:
+  device_flags: []
+  required_device_flags: []
+
+service:
+  name: ollama
+  restart_count: 0
+  restart_mode: external
+
+self_healing:
+  max_attempts: 3
+
+active_model_provider: ollama-qwen3-0-6b
+model_providers:
+  ollama-qwen3-0-6b:
+    adapter: openai-compatible
+    runtime_type: ollama
+    endpoint_protocol: openai-compatible
+    model:
+      id: qwen3:0.6b
+      endpoint:
+        base_url: http://127.0.0.1:11434/v1
+        expected_base_url: http://127.0.0.1:11434/v1
+        wrong_base_url: http://127.0.0.1:11435/v1
+      context:
+        max_tokens: 1024
+        safe_max_tokens: 2048
+      tool_calling:
+        enabled: false
+        parser: ""
+        expected_parser: ""
+        parser_header: X-ROCm-Doctor-Tool-Parser
+    capabilities:
+      models: true
+      chat_completions: true
+      tool_calls: false
+      context_length: true
+      rocm_device_flags: false
+      restart: false
+    request: &ollama_request
+      timeout_seconds: 30.0
+      stream: false
+      retry:
+        max_attempts: 2
+        backoff_seconds: 0.25
+        retry_status_codes: [408, 409, 429, 500, 502, 503, 504]
+        retry_on_timeout: true
+        retry_on_invalid_json: true
+    templates: &default_templates
+      health_chat: ../templates/health_chat.j2
+      tool_call: ../templates/tool_call_prompt.j2
+    health: &ollama_health
+      probes:
+        - endpoint_models
+        - chat_completion
+        - context_length
+      skip_reasons:
+        tool_calls: native tool-call output is not required for this tiny Ollama profile
+        rocm_device_flags: local Ollama does not use ROCm container device flags
+        restart: ROCm Doctor does not control the local Ollama service
+    repair: &ollama_repair
+      known_failure_signatures:
+        wrong_endpoint_port:
+          - GET /v1/models failed
+          - configured URL differs from expected URL
+        context_length_too_large:
+          - max_model_len exceeds safe_max_model_len
+      safe_recipes:
+        - noop
+        - update_endpoint_url
+        - lower_max_model_len
+    validation: &small_validation
+      max_health_response_chars: 160
+      max_repeated_token_count: 8
+      health_max_tokens: 256
+
+  ollama-smollm2-135m:
+    adapter: openai-compatible
+    runtime_type: ollama
+    endpoint_protocol: openai-compatible
+    model:
+      id: smollm2:135m
+      endpoint:
+        base_url: http://127.0.0.1:11434/v1
+        expected_base_url: http://127.0.0.1:11434/v1
+        wrong_base_url: http://127.0.0.1:11435/v1
+      context:
+        max_tokens: 512
+        safe_max_tokens: 1024
+      tool_calling:
+        enabled: false
+        parser: ""
+        expected_parser: ""
+        parser_header: X-ROCm-Doctor-Tool-Parser
+    capabilities:
+      models: true
+      chat_completions: true
+      tool_calls: false
+      context_length: true
+      rocm_device_flags: false
+      restart: false
+    request: *ollama_request
+    templates: *default_templates
+    health: *ollama_health
+    repair: *ollama_repair
+    validation: *small_validation
+
+  ollama-tinyllama-1-1b:
+    adapter: openai-compatible
+    runtime_type: ollama
+    endpoint_protocol: openai-compatible
+    model:
+      id: tinyllama:1.1b
+      endpoint:
+        base_url: http://127.0.0.1:11434/v1
+        expected_base_url: http://127.0.0.1:11434/v1
+        wrong_base_url: http://127.0.0.1:11435/v1
+      context:
+        max_tokens: 768
+        safe_max_tokens: 1536
+      tool_calling:
+        enabled: false
+        parser: ""
+        expected_parser: ""
+        parser_header: X-ROCm-Doctor-Tool-Parser
+    capabilities:
+      models: true
+      chat_completions: true
+      tool_calls: false
+      context_length: true
+      rocm_device_flags: false
+      restart: false
+    request: *ollama_request
+    templates: *default_templates
+    health: *ollama_health
+    repair: *ollama_repair
+    validation: *small_validation
+
+diagnosis:
+  active_provider: rules
+  providers:
+    rules:
+      type: rules
+    fake:
+      type: fake
+      mode: normal
+
+stress_tests:
+  target_model_providers:
+    - ollama-qwen3-0-6b
+    - ollama-smollm2-135m
+    - ollama-tinyllama-1-1b
+  timeout_seconds: 30.0

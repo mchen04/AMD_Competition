@@ -1,0 +1,109 @@
+version: 1
+workspace: .
+reports_dir: reports
+state_file: .rocm-doctor-state.json
+
+hardware:
+  backend: amd-developer-cloud
+  accelerator: mi300x
+  runtime: vllm
+  deployment_target: digitalocean-gpu-droplet
+  amd:
+    rocm_required: true
+    device_flags: ["/dev/kfd", "/dev/dri"]
+    benchmark_profile: mi300x-vllm
+
+launch:
+  device_flags: ["/dev/kfd", "/dev/dri"]
+  required_device_flags: ["/dev/kfd", "/dev/dri"]
+
+service:
+  name: vllm
+  restart_count: 0
+  restart_mode: external
+
+self_healing:
+  max_attempts: 3
+
+active_model_provider: amd-vllm-mi300x
+model_providers:
+  amd-vllm-mi300x:
+    adapter: openai-compatible
+    runtime_type: amd-vllm
+    endpoint_protocol: openai-compatible
+    model:
+      id: replace-with-served-model
+      endpoint:
+        base_url: http://replace-me.example:8000/v1
+        expected_base_url: http://replace-me.example:8000/v1
+        wrong_base_url: http://replace-me.example:8001/v1
+      context:
+        max_tokens: 4096
+        safe_max_tokens: 8192
+      tool_calling:
+        enabled: true
+        parser: replace-with-parser
+        expected_parser: replace-with-parser
+        parser_header: X-ROCm-Doctor-Tool-Parser
+    capabilities:
+      models: true
+      chat_completions: true
+      tool_calls: true
+      context_length: true
+      rocm_device_flags: true
+      restart: false
+    request:
+      timeout_seconds: 15.0
+      stream: false
+      retry:
+        max_attempts: 3
+        backoff_seconds: 0.5
+        retry_status_codes: [408, 409, 429, 500, 502, 503, 504]
+        retry_on_timeout: true
+        retry_on_invalid_json: true
+    templates:
+      health_chat: ../templates/health_chat.j2
+      tool_call: ../templates/tool_call_prompt.j2
+    health:
+      probes:
+        - endpoint_models
+        - chat_completion
+        - context_length
+        - rocm_device_flags
+        - tool_call_parser
+      skip_reasons:
+        restart: service restart is controlled outside ROCm Doctor in this template
+    repair:
+      known_failure_signatures:
+        wrong_endpoint_port:
+          - GET /v1/models failed
+        context_length_too_large:
+          - max_model_len exceeds safe_max_model_len
+        tool_parser_mismatch:
+          - response did not contain a tool call
+        missing_rocm_device_flags:
+          - missing ROCm device flags
+      safe_recipes:
+        - noop
+        - update_endpoint_url
+        - lower_max_model_len
+        - set_tool_parser
+        - set_rocm_device_flags
+    validation:
+      max_health_response_chars: 160
+      max_repeated_token_count: 8
+      health_max_tokens: 32
+
+diagnosis:
+  active_provider: rules
+  providers:
+    rules:
+      type: rules
+    fake:
+      type: fake
+      mode: normal
+
+stress_tests:
+  target_model_providers:
+    - amd-vllm-mi300x
+  timeout_seconds: 15.0

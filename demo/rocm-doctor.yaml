@@ -1,0 +1,126 @@
+version: 1
+workspace: .
+reports_dir: reports
+state_file: .rocm-doctor-state.json
+
+hardware:
+  backend: local
+  accelerator: none
+  runtime: fake-openai-compatible
+  deployment_target: developer-laptop
+  amd:
+    rocm_required: false
+    device_flags: ["/dev/kfd", "/dev/dri"]
+    benchmark_profile: local
+
+launch:
+  device_flags: ["/dev/kfd", "/dev/dri"]
+  required_device_flags: ["/dev/kfd", "/dev/dri"]
+
+service:
+  name: fake-vllm
+  restart_count: 0
+  restart_mode: dry-run
+
+self_healing:
+  max_attempts: 3
+
+active_model_provider: fake-openai
+model_providers:
+  fake-openai:
+    adapter: openai-compatible
+    runtime_type: fake
+    endpoint_protocol: openai-compatible
+    model:
+      id: fake-qwen3
+      endpoint:
+        base_url: http://127.0.0.1:8000/v1
+        expected_base_url: http://127.0.0.1:8000/v1
+        wrong_base_url: http://127.0.0.1:8001/v1
+      context:
+        max_tokens: 2048
+        safe_max_tokens: 4096
+      tool_calling:
+        enabled: true
+        parser: qwen3
+        expected_parser: qwen3
+        parser_header: X-ROCm-Doctor-Tool-Parser
+    capabilities:
+      models: true
+      chat_completions: true
+      tool_calls: true
+      context_length: true
+      rocm_device_flags: true
+      restart: true
+    request:
+      timeout_seconds: 1.5
+      stream: false
+      retry:
+        max_attempts: 2
+        backoff_seconds: 0.05
+        retry_status_codes: [408, 409, 429, 500, 502, 503, 504]
+        retry_on_timeout: true
+        retry_on_invalid_json: true
+    templates:
+      health_chat: ../templates/health_chat.j2
+      tool_call: ../templates/tool_call_prompt.j2
+    health:
+      probes:
+        - endpoint_models
+        - chat_completion
+        - context_length
+        - rocm_device_flags
+        - tool_call_parser
+      skip_reasons: {}
+    repair:
+      known_failure_signatures:
+        wrong_endpoint_port:
+          - GET /v1/models failed
+          - configured URL differs from expected URL
+        context_length_too_large:
+          - max_model_len exceeds safe_max_model_len
+        tool_parser_mismatch:
+          - response did not contain a tool call
+        missing_rocm_device_flags:
+          - missing ROCm device flags
+      safe_recipes:
+        - noop
+        - update_endpoint_url
+        - lower_max_model_len
+        - set_tool_parser
+        - set_rocm_device_flags
+        - restart_known_service
+    validation:
+      max_health_response_chars: 120
+      max_repeated_token_count: 8
+      health_max_tokens: 32
+
+diagnosis:
+  active_provider: rules
+  providers:
+    rules:
+      type: rules
+    fake:
+      type: fake
+      mode: normal
+    openai-codex:
+      type: openai-responses
+      endpoint: https://api.openai.com/v1/responses
+      api_key_env: OPENAI_API_KEY
+      model: gpt-5.3-codex
+      model_env: ROCM_DOCTOR_OPENAI_MODEL
+      timeout_seconds: 30.0
+      retry:
+        max_attempts: 1
+        backoff_seconds: 0.0
+        retry_status_codes: [408, 409, 429, 500, 502, 503, 504]
+        retry_on_timeout: true
+        retry_on_invalid_json: true
+      templates:
+        diagnosis_system: ../templates/openai_diagnosis_system.j2
+        repair_system: ../templates/openai_repair_system.j2
+
+stress_tests:
+  target_model_providers:
+    - fake-openai
+  timeout_seconds: 2.0

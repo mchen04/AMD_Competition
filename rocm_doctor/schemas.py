@@ -21,8 +21,20 @@ RISK_LEVELS = {"none", "low", "medium", "high"}
 
 
 @dataclass
+class RetryPolicy:
+    max_attempts: int = 1
+    backoff_seconds: float = 0.0
+    retry_status_codes: list[int] = field(
+        default_factory=lambda: [408, 409, 429, 500, 502, 503, 504]
+    )
+    retry_on_timeout: bool = True
+    retry_on_invalid_json: bool = True
+
+
+@dataclass
 class RuntimeProfile:
     id: str
+    adapter: str
     runtime_type: str
     endpoint_protocol: str
     model_name: str
@@ -33,13 +45,18 @@ class RuntimeProfile:
     max_model_len: int
     safe_max_model_len: int
     request_timeout_seconds: float
+    retry: RetryPolicy
+    stream: bool
+    templates: dict[str, str]
     tool_parser: str
     expected_tool_parser: str
+    tool_parser_header: str
     tool_check_enabled: bool
     health_probes: list[str] = field(default_factory=list)
     known_failure_signatures: dict[str, list[str]] = field(default_factory=dict)
     safe_repair_recipes: list[str] = field(default_factory=list)
     skip_reasons: dict[str, str] = field(default_factory=dict)
+    validation: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -145,6 +162,17 @@ class VerificationResult:
     checks: dict[str, bool]
     evidence: EvidenceBundle
     message: str = ""
+
+
+@dataclass
+class SelfHealResult:
+    healthy: bool
+    recovered: bool
+    attempts: int
+    unrecoverable: bool = False
+    reason: str = ""
+    repairs: list[RepairResult] = field(default_factory=list)
+    final_verification: VerificationResult | None = None
 
 
 @dataclass

@@ -1,131 +1,61 @@
 # Demo Runbook
 
-The judge-facing demo should be repeatable and short.
+## Local Loop
 
-## Target Story
-
-Break a working AI agent deployment on AMD Developer Cloud, then run ROCm Doctor and watch it diagnose, repair, verify, and report the recovery.
-
-## Local Demo Loop
-
-Build this before using GPU credits.
-
-1. Start the deterministic fake OpenAI-compatible endpoint:
+Start the fake endpoint:
 
 ```bash
-python3 -m rocm_doctor fake-endpoint --port 8000
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor fake-endpoint --port 8000
 ```
 
-2. In another terminal, run a healthy check:
+Use a copied config if you do not want to mutate the checked-in demo file:
 
 ```bash
-python3 -m rocm_doctor check --config demo/rocm-doctor.json
+cp demo/rocm-doctor.yaml /tmp/rocm-doctor-demo.yaml
 ```
 
-3. Inject a failure and run the repair loop:
+Run the loop:
 
 ```bash
-python3 -m rocm_doctor inject-failure wrong_endpoint_port --config demo/rocm-doctor.json
-python3 -m rocm_doctor diagnose --provider rules --config demo/rocm-doctor.json
-python3 -m rocm_doctor heal --provider rules --config demo/rocm-doctor.json
-python3 -m rocm_doctor verify --config demo/rocm-doctor.json
-python3 -m rocm_doctor report --config demo/rocm-doctor.json
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check --config /tmp/rocm-doctor-demo.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor inject-failure wrong_endpoint_port --config /tmp/rocm-doctor-demo.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor self-heal --provider rules --config /tmp/rocm-doctor-demo.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor report --config /tmp/rocm-doctor-demo.yaml
 ```
 
-4. Open the generated markdown report under `demo/reports/`.
+The report records the model provider, adapter, skipped checks, diagnosis, repair, and before/after evidence.
 
-The report records the active runtime profile and any checks skipped by profile capability.
+## Optional Tiny Models
 
-## Optional Real Tiny Qwen Loop
+`demo/ollama-tiny-models.yaml` contains OpenAI-compatible Ollama profiles for:
 
-Use this only after the fake endpoint path is stable.
+- `qwen3:0.6b`
+- `smollm2:135m`
+- `tinyllama:1.1b`
 
-1. Start Ollama and pull the tiny model:
+Switch `active_model_provider` to the provider you want to test, then run:
 
 ```bash
-ollama serve
-ollama pull qwen3:0.6b
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check --config demo/ollama-tiny-models.yaml
 ```
 
-2. Run the profile-backed check:
+Tool-call and ROCm device checks are disabled for these local Ollama profiles unless the runtime is configured to support them.
 
-```bash
-python3 -m rocm_doctor check --config demo/ollama-qwen.json
-```
+## Failure Scenarios
 
-3. Validate the wrong-port repair loop:
+- `wrong_endpoint_port`: repairs the active model provider endpoint URL.
+- `context_length_too_large`: lowers the active model provider context limit.
+- `tool_parser_mismatch`: restores the active provider tool parser.
+- `missing_rocm_device_flags`: restores required ROCm device flags.
+- `malformed_provider_output`, `unknown_recipe`, `unsafe_command`, `path_traversal`, `credential_modification`: fail closed with no unsafe edits.
 
-```bash
-python3 -m rocm_doctor inject-failure wrong_endpoint_port --config demo/ollama-qwen.json
-python3 -m rocm_doctor diagnose --provider rules --config demo/ollama-qwen.json
-python3 -m rocm_doctor heal --provider rules --config demo/ollama-qwen.json
-python3 -m rocm_doctor verify --config demo/ollama-qwen.json
-python3 -m rocm_doctor report --config demo/ollama-qwen.json
-```
+## AMD Demo
 
-The `ollama-qwen` profile checks `/v1/models`, chat completion, and context length. Tool-call checks are skipped because local Ollama/Qwen is not required to emit native OpenAI tool calls for this demo path. ROCm device-flag checks are skipped because local Ollama is not a ROCm container launch.
+Do this only after the local loop passes:
 
-If the Codex/OpenAI provider is implemented, run diagnosis twice during the local demo:
-
-```bash
-python3 -m rocm_doctor diagnose --provider rules --config demo/rocm-doctor.json
-python3 -m rocm_doctor diagnose --provider openai-codex --config demo/rocm-doctor.json
-```
-
-The important judge-facing point is that both providers emit the same structured diagnosis shape, while `heal` still applies only deterministic recipes owned by the harness.
-If `OPENAI_API_KEY` is absent, `openai-codex` returns a structured `provider_skipped` diagnosis and performs no paid call.
-
-## Minimum Failure Scenarios
-
-### Wrong Endpoint Port
-
-- Symptom: agent cannot reach the model endpoint.
-- Diagnosis: configured base URL points at the wrong port.
-- Repair: update config to the active endpoint.
-- Verification: `/v1/models` and one chat completion pass.
-
-### Context Length Too Large
-
-- Symptom: model server fails to start or crashes on allocation.
-- Diagnosis: launch args request an unsafe max model length.
-- Repair: lower `--max-model-len` to a known safe value.
-- Verification: restart server and run smoke prompts.
-
-### Tool Calling Parser Misconfigured
-
-- Symptom: model responds, but tool calls fail or appear as plain text.
-- Diagnosis: selected vLLM tool-calling flags/parser do not match the model.
-- Repair: restart with model-appropriate tool-calling settings.
-- Verification: deterministic tool-call test passes.
-
-### Missing ROCm Device Flags
-
-- Symptom: launch config does not include required ROCm device nodes.
-- Diagnosis: `/dev/kfd` and/or `/dev/dri` missing from the demo launch config.
-- Repair: patch `launch.device_flags` with the required flags.
-- Verification: config validation passes.
-
-## AMD Cloud Demo Loop
-
-Use this only after the local loop is stable.
-
-1. Create a single MI300X GPU Droplet with the AMD AI/ML-ready image.
+1. Create one MI300X droplet.
 2. Verify ROCm with `rocminfo` and `amd-smi` or `rocm-smi`.
-3. Start a small vLLM OpenAI-compatible server.
-4. Point ROCm Doctor at the remote endpoint.
-5. Run one passing check.
-6. Inject one controlled failure.
-7. Run heal/verify.
-8. Save the incident report and a terminal/browser recording.
-9. Destroy the GPU Droplet.
-
-## Demo Recording Checklist
-
-- Project name visible: ROCm Doctor
-- AMD Developer Cloud or MI300X evidence visible
-- Failure is obvious before repair
-- Diagnosis names a concrete root cause
-- Repair action is specific
-- Verification passes after repair
-- Final report is readable in under one minute
-- Optional Codex/OpenAI provider is framed as diagnosis and repair planning, not uncontrolled execution
+3. Start vLLM with an OpenAI-compatible endpoint.
+4. Add or activate a YAML `model_providers` entry for that endpoint.
+5. Run `check`, one controlled failure, `self-heal`, and `report`.
+6. Destroy the droplet after the validation window.

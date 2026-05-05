@@ -115,8 +115,9 @@ def _validate_safety(
         if contains_sensitive_key(str(dotted_key)):
             raise SafetyError(f"credential or secret modification rejected: {dotted_key}")
 
+    allowed_paths = recipe.config_paths(config)
     for dotted_key, provider_value in provider_changes.items():
-        if dotted_key not in recipe.config_paths:
+        if dotted_key not in allowed_paths:
             raise SafetyError(f"provider attempted to edit path outside recipe scope: {dotted_key}")
         if dotted_key not in deterministic_changes:
             raise SafetyError(f"provider attempted a non-deterministic edit: {dotted_key}")
@@ -124,12 +125,15 @@ def _validate_safety(
             raise SafetyError(f"provider value for {dotted_key} did not match deterministic recipe output")
 
     for dotted_key in deterministic_changes:
-        if dotted_key not in recipe.config_paths:
+        if dotted_key not in allowed_paths:
             raise SafetyError(f"recipe attempted to edit undeclared path: {dotted_key}")
-    if "model.base_url" in deterministic_changes:
-        expected = config["model"].get("expected_base_url")
-        if deterministic_changes["model.base_url"] != expected:
-            raise SafetyError("network endpoint change is only allowed to model.expected_base_url")
+    endpoint_path = f"model_providers.{config['active_model_provider']}.model.endpoint.base_url"
+    if endpoint_path in deterministic_changes:
+        expected = config["model_providers"][config["active_model_provider"]]["model"]["endpoint"][
+            "expected_base_url"
+        ]
+        if deterministic_changes[endpoint_path] != expected:
+            raise SafetyError("network endpoint change is only allowed to the expected endpoint URL")
 
 
 def _rejected(recipe_id: str, before: dict[str, Any], reason: str) -> RepairResult:

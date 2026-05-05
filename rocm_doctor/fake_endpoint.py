@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -15,6 +16,12 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
             return
         if self.server.failure_mode == "models_500":
             self._send_json(500, {"error": {"message": "models endpoint failed"}})
+            return
+        if self.server.failure_mode == "rate_limit":
+            self._send_json(429, {"error": {"message": "rate limited"}})
+            return
+        if self.server.failure_mode == "rate_limit_once" and self.server._consume_once("models"):
+            self._send_json(429, {"error": {"message": "rate limited once"}})
             return
         self._send_json(
             200,
@@ -40,6 +47,19 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'{"choices": [')
             return
+        if self.server.failure_mode == "empty_response":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            return
+        if self.server.failure_mode == "partial_response":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"choices":[{"message":')
+            return
+        if self.server.failure_mode == "slow_response":
+            time.sleep(self.server.slow_response_seconds)
         body = self.rfile.read(int(self.headers.get("Content-Length", "0") or 0))
         try:
             payload = json.loads(body.decode("utf-8") or "{}")
@@ -49,12 +69,30 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
         if self.server.failure_mode == "chat_500":
             self._send_json(500, {"error": {"message": "chat endpoint failed"}})
             return
+        if self.server.failure_mode == "rate_limit":
+            self._send_json(429, {"error": {"message": "rate limited"}})
+            return
+        if self.server.failure_mode == "stream_interrupt" and payload.get("stream"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(b"data: {\"choices\":[")
+            return
         if payload.get("tools"):
             parser = self.headers.get("X-ROCm-Doctor-Tool-Parser", "")
+            if self.server.failure_mode == "tool_wrong_name":
+                self._send_json(200, _tool_call_response(self.server.model_id, name="not_rocm_doctor_ping"))
+                return
             if parser == self.server.expected_tool_parser:
                 self._send_json(200, _tool_call_response(self.server.model_id))
             else:
                 self._send_json(200, _plain_response(self.server.model_id, "plain text; no tool call"))
+            return
+        if self.server.failure_mode == "hallucinated_tool_call":
+            self._send_json(200, _tool_call_response(self.server.model_id))
+            return
+        if self.server.failure_mode == "repetitive_output":
+            self._send_json(200, _plain_response(self.server.model_id, "loop " * 20))
             return
         self._send_json(200, _plain_response(self.server.model_id, "rocm doctor ok"))
 
@@ -77,11 +115,20 @@ class FakeOpenAIHTTPServer(ThreadingHTTPServer):
         model_id: str = "fake-qwen3",
         expected_tool_parser: str = "qwen3",
         failure_mode: str = "healthy",
+        slow_response_seconds: float = 2.0,
     ) -> None:
         super().__init__(server_address, FakeOpenAIHandler)
         self.model_id = model_id
         self.expected_tool_parser = expected_tool_parser
         self.failure_mode = failure_mode
+        self.slow_response_seconds = slow_response_seconds
+        self._once_failures: set[str] = set()
+
+    def _consume_once(self, key: str) -> bool:
+        if key in self._once_failures:
+            return False
+        self._once_failures.add(key)
+        return True
 
 
 class FakeOpenAIServer:
@@ -92,12 +139,14 @@ class FakeOpenAIServer:
         model_id: str = "fake-qwen3",
         expected_tool_parser: str = "qwen3",
         failure_mode: str = "healthy",
+        slow_response_seconds: float = 2.0,
     ) -> None:
         self._server = FakeOpenAIHTTPServer(
             (host, port),
             model_id=model_id,
             expected_tool_parser=expected_tool_parser,
             failure_mode=failure_mode,
+            slow_response_seconds=slow_response_seconds,
         )
         self._thread: threading.Thread | None = None
 
@@ -137,12 +186,14 @@ def serve_forever(
     model_id: str = "fake-qwen3",
     expected_tool_parser: str = "qwen3",
     failure_mode: str = "healthy",
+    slow_response_seconds: float = 2.0,
 ) -> None:
     server = FakeOpenAIHTTPServer(
         (host, port),
         model_id=model_id,
         expected_tool_parser=expected_tool_parser,
         failure_mode=failure_mode,
+        slow_response_seconds=slow_response_seconds,
     )
     try:
         server.serve_forever()
@@ -159,7 +210,7 @@ def _plain_response(model_id: str, content: str) -> dict[str, Any]:
     }
 
 
-def _tool_call_response(model_id: str) -> dict[str, Any]:
+def _tool_call_response(model_id: str, name: str = "rocm_doctor_ping") -> dict[str, Any]:
     return {
         "id": "chatcmpl_rocm_doctor_fake_tool",
         "object": "chat.completion",
@@ -174,7 +225,7 @@ def _tool_call_response(model_id: str) -> dict[str, Any]:
                             "id": "call_rocm_doctor_ping",
                             "type": "function",
                             "function": {
-                                "name": "rocm_doctor_ping",
+                                "name": name,
                                 "arguments": "{\"status\":\"ok\"}",
                             },
                         }

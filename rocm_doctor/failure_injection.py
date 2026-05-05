@@ -25,16 +25,18 @@ def inject_failure(config_path: str | Path, scenario: str) -> dict[str, Any]:
         raise ValueError(f"unknown failure scenario: {scenario}")
     config = load_config(config_path)
     before = _snapshot_bits(config)
+    provider_id = str(config["active_model_provider"])
+    provider = config["model_providers"][provider_id]
 
     if scenario == "wrong_endpoint_port":
-        config["model"]["base_url"] = config["model"].get("wrong_base_url") or _bump_port(
-            str(config["model"]["base_url"])
-        )
+        endpoint = provider["model"]["endpoint"]
+        endpoint["base_url"] = endpoint.get("wrong_base_url") or _bump_port(str(endpoint["base_url"]))
     elif scenario == "context_length_too_large":
-        safe = int(config["model"].get("safe_max_model_len", 4096))
-        config["model"]["max_model_len"] = max(safe + 1, safe * 2)
+        context = provider["model"]["context"]
+        safe = int(context.get("safe_max_tokens", 4096))
+        context["max_tokens"] = max(safe + 1, safe * 2)
     elif scenario == "tool_parser_mismatch":
-        config["model"]["tool_parser"] = "wrong-parser"
+        provider["model"]["tool_calling"]["parser"] = "wrong-parser"
     elif scenario == "missing_rocm_device_flags":
         required = set(map(str, config["launch"].get("required_device_flags", [])))
         config["launch"]["device_flags"] = [
@@ -56,7 +58,9 @@ def inject_failure(config_path: str | Path, scenario: str) -> dict[str, Any]:
 
 
 def _set_fake_mode(config: dict[str, Any], mode: str) -> None:
-    config.setdefault("provider", {}).setdefault("fake", {})["mode"] = mode
+    config.setdefault("diagnosis", {}).setdefault("providers", {}).setdefault("fake", {"type": "fake"})[
+        "mode"
+    ] = mode
 
 
 def _bump_port(url: str) -> str:
@@ -68,10 +72,13 @@ def _bump_port(url: str) -> str:
 
 
 def _snapshot_bits(config: dict[str, Any]) -> dict[str, Any]:
+    provider_id = str(config["active_model_provider"])
+    provider = config["model_providers"][provider_id]
     return {
-        "base_url": config["model"].get("base_url"),
-        "max_model_len": config["model"].get("max_model_len"),
-        "tool_parser": config["model"].get("tool_parser"),
+        "model_provider": provider_id,
+        "base_url": provider["model"]["endpoint"].get("base_url"),
+        "max_model_len": provider["model"]["context"].get("max_tokens"),
+        "tool_parser": provider["model"]["tool_calling"].get("parser"),
         "device_flags": config["launch"].get("device_flags"),
-        "fake_provider_mode": config.get("provider", {}).get("fake", {}).get("mode"),
+        "fake_provider_mode": config.get("diagnosis", {}).get("providers", {}).get("fake", {}).get("mode"),
     }

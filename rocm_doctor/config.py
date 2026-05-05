@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from .schemas import RuntimeProfile
+import yaml
+
+from .schemas import RetryPolicy, RuntimeProfile
 
 
 SENSITIVE_KEY_PARTS = ("api_key", "apikey", "token", "secret", "password", "credential")
-DEFAULT_PROFILE_ID = "fake-openai"
+DEFAULT_DIAGNOSIS_PROVIDER = "rules"
 
 
 class ConfigError(RuntimeError):
@@ -25,234 +28,302 @@ def load_config(path: str | Path) -> dict[str, Any]:
     except OSError as exc:
         raise ConfigError(f"could not read config file: {exc}") from exc
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ConfigError(f"config file is not valid JSON/YAML-compatible JSON: {exc}") from exc
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"config file is not valid YAML: {exc}") from exc
     if not isinstance(data, dict):
-        raise ConfigError("config root must be an object")
+        raise ConfigError("config root must be a YAML object")
     return normalize_config(data)
 
 
 def save_config(path: str | Path, config: dict[str, Any]) -> None:
     config_path = Path(path)
-    config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    payload = _strip_normalized_only_keys(deepcopy(config))
+    if config_path.suffix.lower() == ".json":
+        text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    else:
+        text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=False)
+    config_path.write_text(text, encoding="utf-8")
 
 
 def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     data = deepcopy(config)
+    data.setdefault("version", 1)
     data.setdefault("workspace", ".")
     data.setdefault("reports_dir", "reports")
     data.setdefault("state_file", ".rocm-doctor-state.json")
-    data.setdefault("active_profile", data.get("profile_id", DEFAULT_PROFILE_ID))
-    data.setdefault("model", {})
+    data.setdefault("hardware", {})
+    data["hardware"] = _normalize_hardware(data["hardware"])
     data.setdefault("launch", {})
+    data["launch"].setdefault("device_flags", [])
+    data["launch"].setdefault("required_device_flags", [])
     data.setdefault("service", {})
-    data.setdefault("provider", {})
-    model = data["model"]
-    model.setdefault("name", "fake-qwen3")
-    model.setdefault("base_url", "http://127.0.0.1:8000/v1")
-    model.setdefault("expected_base_url", model["base_url"])
-    model.setdefault("wrong_base_url", "http://127.0.0.1:8001/v1")
-    model.setdefault("max_model_len", 2048)
-    model.setdefault("safe_max_model_len", 4096)
-    model.setdefault("tool_parser", "qwen3")
-    model.setdefault("expected_tool_parser", "qwen3")
-    model.setdefault("tool_check_enabled", True)
-    launch = data["launch"]
-    launch.setdefault("device_flags", ["/dev/kfd", "/dev/dri"])
-    launch.setdefault("required_device_flags", ["/dev/kfd", "/dev/dri"])
-    service = data["service"]
-    service.setdefault("name", "fake-vllm")
-    service.setdefault("restart_count", 0)
-    service.setdefault("restart_mode", "dry-run")
-    data["provider"].setdefault("fake", {"mode": "normal"})
-    data["profiles"] = _normalize_profiles(data)
+    data["service"].setdefault("restart_count", 0)
+    data["service"].setdefault("restart_mode", "dry-run")
+    data.setdefault("self_healing", {})
+    data["self_healing"].setdefault("max_attempts", 3)
+    data.setdefault("stress_tests", {})
+    data["stress_tests"].setdefault("target_model_providers", [])
+    data["stress_tests"].setdefault("timeout_seconds", 2.0)
+
+    if "model_providers" not in data or not isinstance(data["model_providers"], dict):
+        raise ConfigError("config must define model_providers")
+    if "active_model_provider" not in data:
+        raise ConfigError("config must define active_model_provider")
+    active_model_provider = str(data["active_model_provider"])
+    providers = data["model_providers"]
+    if active_model_provider not in providers:
+        raise ConfigError(f"active model provider is not configured: {active_model_provider}")
+    data["model_providers"] = {
+        str(provider_id): _normalize_model_provider(str(provider_id), provider)
+        for provider_id, provider in providers.items()
+    }
+
+    data.setdefault("diagnosis", {})
+    data["diagnosis"] = _normalize_diagnosis(data["diagnosis"])
+    _validate_config(data)
     return data
 
 
 def get_active_profile(config: dict[str, Any]) -> RuntimeProfile:
     data = normalize_config(config)
-    profile_id = str(data.get("active_profile", DEFAULT_PROFILE_ID))
-    profile = data["profiles"].get(profile_id)
-    if not isinstance(profile, dict):
-        raise ConfigError(f"active profile is not configured: {profile_id}")
-
-    model = data["model"]
-    context = profile.get("context", {})
-    tool_calling = profile.get("tool_calling", {})
-    capabilities = {
-        str(key): bool(value) for key, value in dict(profile.get("capabilities", {})).items()
-    }
-    signatures = {
-        str(key): [str(item) for item in value]
-        for key, value in dict(profile.get("known_failure_signatures", {})).items()
-        if isinstance(value, list)
-    }
+    provider_id = str(data["active_model_provider"])
+    provider = data["model_providers"][provider_id]
+    model = provider["model"]
+    endpoint = model["endpoint"]
+    context = model["context"]
+    tool_calling = model["tool_calling"]
+    request = provider["request"]
+    retry = request["retry"]
+    health = provider["health"]
+    repair = provider["repair"]
+    validation = provider.get("validation", {})
     return RuntimeProfile(
-        id=profile_id,
-        runtime_type=str(profile.get("runtime_type", "fake")),
-        endpoint_protocol=str(profile.get("endpoint_protocol", "openai-compatible")),
-        model_name=str(model.get("name", profile.get("model_name", "fake-qwen3"))),
-        base_url=str(model.get("base_url", "http://127.0.0.1:8000/v1")),
-        expected_base_url=str(model.get("expected_base_url", model.get("base_url", ""))),
-        wrong_base_url=str(model.get("wrong_base_url", "http://127.0.0.1:8001/v1")),
-        capabilities=capabilities,
-        max_model_len=_int_or_default(model.get("max_model_len"), 2048),
-        safe_max_model_len=_int_or_default(
-            model.get("safe_max_model_len", context.get("safe_max_model_len", 4096)), 4096
+        id=provider_id,
+        adapter=str(provider["adapter"]),
+        runtime_type=str(provider["runtime_type"]),
+        endpoint_protocol=str(provider["endpoint_protocol"]),
+        model_name=str(model["id"]),
+        base_url=str(endpoint["base_url"]),
+        expected_base_url=str(endpoint["expected_base_url"]),
+        wrong_base_url=str(endpoint["wrong_base_url"]),
+        capabilities={str(key): bool(value) for key, value in provider["capabilities"].items()},
+        max_model_len=_int_or_error(context["max_tokens"], f"{provider_id}.model.context.max_tokens"),
+        safe_max_model_len=_int_or_error(
+            context["safe_max_tokens"], f"{provider_id}.model.context.safe_max_tokens"
         ),
-        request_timeout_seconds=_float_or_default(profile.get("request_timeout_seconds"), 1.5),
-        tool_parser=str(model.get("tool_parser", tool_calling.get("configured_parser", ""))),
-        expected_tool_parser=str(
-            model.get("expected_tool_parser", tool_calling.get("expected_parser", ""))
+        request_timeout_seconds=_float_or_error(
+            request["timeout_seconds"], f"{provider_id}.request.timeout_seconds"
         ),
-        tool_check_enabled=bool(model.get("tool_check_enabled", capabilities.get("tool_calls", False))),
-        health_probes=[str(item) for item in profile.get("health_probes", [])],
-        known_failure_signatures=signatures,
-        safe_repair_recipes=[str(item) for item in profile.get("safe_repair_recipes", [])],
-        skip_reasons={
-            str(key): str(value) for key, value in dict(profile.get("skip_reasons", {})).items()
-        },
-    )
-
-
-def _normalize_profiles(config: dict[str, Any]) -> dict[str, Any]:
-    raw_profiles = config.get("profiles", {})
-    profiles: dict[str, Any] = dict(raw_profiles) if isinstance(raw_profiles, dict) else {}
-    active = str(config.get("active_profile", DEFAULT_PROFILE_ID))
-    existing = profiles.get(active, {})
-    if not isinstance(existing, dict):
-        existing = {}
-    profiles[active] = _merge_dicts(_profile_defaults(active, config), existing)
-    return profiles
-
-
-def _profile_defaults(profile_id: str, config: dict[str, Any]) -> dict[str, Any]:
-    lowered = profile_id.lower()
-    if "ollama" in lowered or "qwen" in lowered:
-        return _ollama_qwen_profile_defaults(config)
-    if "vllm" in lowered or "amd" in lowered:
-        return _vllm_amd_profile_defaults(config)
-    return _fake_profile_defaults(config)
-
-
-def _fake_profile_defaults(config: dict[str, Any]) -> dict[str, Any]:
-    model = config["model"]
-    return {
-        "id": "fake-openai",
-        "runtime_type": "fake",
-        "endpoint_protocol": "openai-compatible",
-        "model_name": model.get("name", "fake-qwen3"),
-        "capabilities": {
-            "models": True,
-            "chat_completions": True,
-            "tool_calls": True,
-            "context_length": True,
-            "rocm_device_flags": True,
-            "restart": True,
-        },
-        "context": {"safe_max_model_len": model.get("safe_max_model_len", 4096)},
-        "request_timeout_seconds": 1.5,
-        "tool_calling": {"expected_parser": model.get("expected_tool_parser", "qwen3")},
-        "health_probes": [
-            "endpoint_models",
-            "chat_completion",
-            "context_length",
-            "rocm_device_flags",
-            "tool_call_parser",
-        ],
-        "known_failure_signatures": {
-            "wrong_endpoint_port": ["GET /v1/models failed", "configured URL differs from expected URL"],
-            "context_length_too_large": ["max_model_len exceeds safe_max_model_len"],
-            "tool_parser_mismatch": ["response did not contain a tool call"],
-            "missing_rocm_device_flags": ["missing ROCm device flags"],
-        },
-        "safe_repair_recipes": [
-            "noop",
-            "update_endpoint_url",
-            "lower_max_model_len",
-            "set_tool_parser",
-            "set_rocm_device_flags",
-            "restart_known_service",
-        ],
-        "skip_reasons": {},
-    }
-
-
-def _ollama_qwen_profile_defaults(config: dict[str, Any]) -> dict[str, Any]:
-    model = config["model"]
-    return {
-        "id": "ollama-qwen",
-        "runtime_type": "ollama",
-        "endpoint_protocol": "openai-compatible",
-        "model_name": model.get("name", "qwen3:0.6b"),
-        "capabilities": {
-            "models": True,
-            "chat_completions": True,
-            "tool_calls": False,
-            "context_length": True,
-            "rocm_device_flags": False,
-            "restart": False,
-        },
-        "context": {"safe_max_model_len": model.get("safe_max_model_len", 2048)},
-        "request_timeout_seconds": 30.0,
-        "tool_calling": {"expected_parser": model.get("expected_tool_parser", "")},
-        "health_probes": ["endpoint_models", "chat_completion", "context_length"],
-        "known_failure_signatures": {
-            "wrong_endpoint_port": ["GET /v1/models failed", "configured URL differs from expected URL"],
-            "context_length_too_large": ["max_model_len exceeds safe_max_model_len"],
-        },
-        "safe_repair_recipes": ["noop", "update_endpoint_url", "lower_max_model_len"],
-        "skip_reasons": {
-            "tool_calls": "ollama-qwen profile does not require native OpenAI tool-call output",
-            "rocm_device_flags": "local Ollama does not use ROCm container device flags",
-            "restart": "ROCm Doctor does not control the local Ollama service",
-        },
-    }
-
-
-def _vllm_amd_profile_defaults(config: dict[str, Any]) -> dict[str, Any]:
-    defaults = _fake_profile_defaults(config)
-    defaults.update(
-        {
-            "id": "vllm-amd",
-            "runtime_type": "amd-vllm",
-            "model_name": config["model"].get("name", "qwen3"),
-            "safe_repair_recipes": [
-                "noop",
-                "update_endpoint_url",
-                "lower_max_model_len",
-                "set_tool_parser",
-                "set_rocm_device_flags",
-                "restart_known_service",
+        retry=RetryPolicy(
+            max_attempts=_int_or_error(retry["max_attempts"], f"{provider_id}.request.retry.max_attempts"),
+            backoff_seconds=_float_or_error(
+                retry["backoff_seconds"], f"{provider_id}.request.retry.backoff_seconds"
+            ),
+            retry_status_codes=[
+                _int_or_error(item, f"{provider_id}.request.retry.retry_status_codes")
+                for item in retry["retry_status_codes"]
             ],
-        }
+            retry_on_timeout=bool(retry["retry_on_timeout"]),
+            retry_on_invalid_json=bool(retry["retry_on_invalid_json"]),
+        ),
+        stream=bool(request["stream"]),
+        templates={str(key): str(value) for key, value in provider["templates"].items()},
+        tool_parser=str(tool_calling["parser"]),
+        expected_tool_parser=str(tool_calling["expected_parser"]),
+        tool_parser_header=str(tool_calling["parser_header"]),
+        tool_check_enabled=bool(tool_calling["enabled"]),
+        health_probes=[str(item) for item in health["probes"]],
+        known_failure_signatures={
+            str(key): [str(item) for item in value]
+            for key, value in repair["known_failure_signatures"].items()
+        },
+        safe_repair_recipes=[str(item) for item in repair["safe_recipes"]],
+        skip_reasons={str(key): str(value) for key, value in health["skip_reasons"].items()},
+        validation=deepcopy(validation),
     )
-    return defaults
 
 
-def _merge_dicts(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
-    merged = deepcopy(defaults)
-    for key, value in overrides.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _merge_dicts(merged[key], value)
-        else:
-            merged[key] = deepcopy(value)
-    return merged
+def active_provider_prefix(config: dict[str, Any]) -> str:
+    provider_id = str(config["active_model_provider"])
+    return f"model_providers.{provider_id}"
 
 
-def _int_or_default(value: Any, default: int) -> int:
+def active_provider_path(config: dict[str, Any], suffix: str) -> str:
+    return f"{active_provider_prefix(config)}.{suffix}"
+
+
+def get_diagnosis_provider_config(config: dict[str, Any], provider_name: str) -> dict[str, Any]:
+    data = normalize_config(config)
+    providers = data["diagnosis"]["providers"]
+    provider = providers.get(provider_name)
+    if not isinstance(provider, dict):
+        raise ConfigError(f"diagnosis provider is not configured: {provider_name}")
+    return provider
+
+
+def _normalize_model_provider(provider_id: str, provider: Any) -> dict[str, Any]:
+    if not isinstance(provider, dict):
+        raise ConfigError(f"model provider {provider_id} must be an object")
+    data = deepcopy(provider)
+    data.setdefault("adapter", "openai-compatible")
+    data.setdefault("runtime_type", "openai-compatible")
+    data.setdefault("endpoint_protocol", "openai-compatible")
+    data.setdefault("capabilities", {})
+    for key in ("models", "chat_completions", "tool_calls", "context_length", "rocm_device_flags", "restart"):
+        data["capabilities"].setdefault(key, False)
+
+    data.setdefault("model", {})
+    model = data["model"]
+    model.setdefault("id", provider_id)
+    model.setdefault("endpoint", {})
+    endpoint = model["endpoint"]
+    endpoint.setdefault("base_url", "")
+    endpoint.setdefault("expected_base_url", endpoint["base_url"])
+    endpoint.setdefault("wrong_base_url", _bump_default_endpoint(endpoint["base_url"]))
+    model.setdefault("context", {})
+    context = model["context"]
+    context.setdefault("max_tokens", 2048)
+    context.setdefault("safe_max_tokens", context["max_tokens"])
+    model.setdefault("tool_calling", {})
+    tool_calling = model["tool_calling"]
+    tool_calling.setdefault("enabled", bool(data["capabilities"].get("tool_calls", False)))
+    tool_calling.setdefault("parser", "")
+    tool_calling.setdefault("expected_parser", tool_calling["parser"])
+    tool_calling.setdefault("parser_header", "X-ROCm-Doctor-Tool-Parser")
+
+    data.setdefault("request", {})
+    request = data["request"]
+    request.setdefault("timeout_seconds", 1.5)
+    request.setdefault("stream", False)
+    request.setdefault("retry", {})
+    retry = request["retry"]
+    retry.setdefault("max_attempts", 1)
+    retry.setdefault("backoff_seconds", 0.0)
+    retry.setdefault("retry_status_codes", [408, 409, 429, 500, 502, 503, 504])
+    retry.setdefault("retry_on_timeout", True)
+    retry.setdefault("retry_on_invalid_json", True)
+
+    data.setdefault("templates", {})
+    templates = data["templates"]
+    templates.setdefault("health_chat", "../templates/health_chat.j2")
+    templates.setdefault("tool_call", "../templates/tool_call_prompt.j2")
+
+    data.setdefault("health", {})
+    health = data["health"]
+    health.setdefault("probes", [])
+    health.setdefault("skip_reasons", {})
+    data.setdefault("repair", {})
+    repair = data["repair"]
+    repair.setdefault("safe_recipes", ["noop"])
+    repair.setdefault("known_failure_signatures", {})
+    data.setdefault("validation", {})
+    data["validation"].setdefault("max_health_response_chars", 120)
+    data["validation"].setdefault("max_repeated_token_count", 8)
+    data["validation"].setdefault("health_max_tokens", 32)
+    return data
+
+
+def _normalize_diagnosis(diagnosis: Any) -> dict[str, Any]:
+    if not isinstance(diagnosis, dict):
+        raise ConfigError("diagnosis must be an object")
+    data = deepcopy(diagnosis)
+    data.setdefault("active_provider", DEFAULT_DIAGNOSIS_PROVIDER)
+    data.setdefault("providers", {})
+    providers = data["providers"]
+    providers.setdefault("rules", {"type": "rules"})
+    providers.setdefault("fake", {"type": "fake", "mode": "normal"})
+    for provider_id, provider in list(providers.items()):
+        if not isinstance(provider, dict):
+            raise ConfigError(f"diagnosis provider {provider_id} must be an object")
+        provider.setdefault("type", str(provider_id))
+        if provider["type"] == "openai-responses":
+            provider.setdefault("endpoint", "https://api.openai.com/v1/responses")
+            provider.setdefault("api_key_env", "OPENAI_API_KEY")
+            provider.setdefault("model", "gpt-5.3-codex")
+            provider.setdefault("model_env", "ROCM_DOCTOR_OPENAI_MODEL")
+            provider.setdefault("timeout_seconds", 30.0)
+            provider.setdefault("retry", {})
+            provider["retry"].setdefault("max_attempts", 1)
+            provider["retry"].setdefault("backoff_seconds", 0.0)
+            provider["retry"].setdefault("retry_status_codes", [408, 409, 429, 500, 502, 503, 504])
+            provider["retry"].setdefault("retry_on_timeout", True)
+            provider["retry"].setdefault("retry_on_invalid_json", True)
+            provider.setdefault("templates", {})
+            provider["templates"].setdefault("diagnosis_system", "../templates/openai_diagnosis_system.j2")
+            provider["templates"].setdefault("repair_system", "../templates/openai_repair_system.j2")
+    if data["active_provider"] not in providers:
+        raise ConfigError(f"active diagnosis provider is not configured: {data['active_provider']}")
+    return data
+
+
+def _normalize_hardware(hardware: Any) -> dict[str, Any]:
+    if not isinstance(hardware, dict):
+        raise ConfigError("hardware must be an object")
+    data = deepcopy(hardware)
+    data.setdefault("backend", "local")
+    data.setdefault("accelerator", "none")
+    data.setdefault("runtime", "fake")
+    data.setdefault("deployment_target", "developer-laptop")
+    data.setdefault("amd", {})
+    data["amd"].setdefault("rocm_required", False)
+    data["amd"].setdefault("device_flags", ["/dev/kfd", "/dev/dri"])
+    data["amd"].setdefault("benchmark_profile", "local")
+    return data
+
+
+def _validate_config(config: dict[str, Any]) -> None:
+    for provider_id in config["model_providers"]:
+        if "." in provider_id:
+            raise ConfigError("model provider ids may not contain dots because repair paths are dotted")
+    active = str(config["active_model_provider"])
+    provider = config["model_providers"][active]
+    if provider["adapter"] != "openai-compatible":
+        raise ConfigError(f"unsupported model provider adapter: {provider['adapter']}")
+    endpoint = provider["model"]["endpoint"]
+    if provider["capabilities"].get("models") and not endpoint["base_url"]:
+        raise ConfigError(f"model provider {active} must configure model.endpoint.base_url")
+    context = provider["model"]["context"]
+    max_tokens = _int_or_error(context["max_tokens"], f"{active}.model.context.max_tokens")
+    safe_tokens = _int_or_error(context["safe_max_tokens"], f"{active}.model.context.safe_max_tokens")
+    if max_tokens <= 0 or safe_tokens <= 0:
+        raise ConfigError("context token limits must be positive")
+    request = provider["request"]
+    attempts = _int_or_error(request["retry"]["max_attempts"], f"{active}.request.retry.max_attempts")
+    if attempts <= 0:
+        raise ConfigError("retry.max_attempts must be positive")
+    timeout = _float_or_error(request["timeout_seconds"], f"{active}.request.timeout_seconds")
+    if timeout <= 0:
+        raise ConfigError("request.timeout_seconds must be positive")
+
+
+def _int_or_error(value: Any, label: str) -> int:
     try:
         return int(value)
-    except (TypeError, ValueError):
-        return default
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{label} must be an integer") from exc
 
 
-def _float_or_default(value: Any, default: float) -> float:
+def _float_or_error(value: Any, label: str) -> float:
     try:
         return float(value)
-    except (TypeError, ValueError):
-        return default
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{label} must be a number") from exc
+
+
+def _bump_default_endpoint(url: str) -> str:
+    if not url:
+        return ""
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(str(url))
+    host = parsed.hostname or "127.0.0.1"
+    port = (parsed.port or 8000) + 1
+    return urlunparse((parsed.scheme or "http", f"{host}:{port}", parsed.path or "/v1", "", "", ""))
+
+
+def _strip_normalized_only_keys(config: dict[str, Any]) -> dict[str, Any]:
+    return config
 
 
 def resolve_workspace(config_path: str | Path, config: dict[str, Any]) -> Path:
@@ -304,14 +375,18 @@ def redact_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def contains_sensitive_key(dotted_key: str) -> bool:
     lowered = dotted_key.lower()
-    return any(part in lowered for part in SENSITIVE_KEY_PARTS)
+    phrase_matches = ("api_key", "apikey", "access_token", "auth_token", "bearer_token")
+    if any(phrase in lowered for phrase in phrase_matches):
+        return True
+    parts = re.split(r"[.\-/]", lowered)
+    return any(part in {"token", "secret", "password", "credential", "credentials"} for part in parts)
 
 
 def _redact(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: dict[str, Any] = {}
         for key, item in value.items():
-            if any(part in str(key).lower() for part in SENSITIVE_KEY_PARTS):
+            if contains_sensitive_key(str(key)):
                 redacted[str(key)] = "[REDACTED]"
             else:
                 redacted[str(key)] = _redact(item)

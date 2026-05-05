@@ -8,7 +8,7 @@ from pathlib import Path
 from .config import ConfigError
 from .failure_injection import SCENARIOS, inject_failure
 from .fake_endpoint import serve_forever
-from .operations import check_config, diagnose_config, heal_config, verify_config
+from .operations import check_config, diagnose_config, heal_config, self_heal_config, verify_config
 from .providers import ProviderError
 from .reporting import generate_report
 from .schemas import to_jsonable
@@ -30,6 +30,10 @@ def main(argv: list[str] | None = None) -> int:
             repair = heal_config(args.config, provider_name=args.provider)
             _print(repair)
             return 0 if not repair.rejected else 1
+        if args.command == "self-heal":
+            result = self_heal_config(args.config, provider_name=args.provider)
+            _print(result)
+            return 0 if result.healthy else 1
         if args.command == "verify":
             verification = verify_config(args.config)
             _print(verification)
@@ -73,6 +77,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config(heal)
     heal.add_argument("--provider", default="rules", help="diagnosis/planning provider")
 
+    self_heal = subparsers.add_parser("self-heal", help="run check/diagnose/heal/verify until healthy or unrecoverable")
+    _add_config(self_heal)
+    self_heal.add_argument("--provider", default="rules", help="diagnosis/planning provider")
+
     verify = subparsers.add_parser("verify", help="rerun health checks after repair")
     _add_config(verify)
 
@@ -88,7 +96,25 @@ def build_parser() -> argparse.ArgumentParser:
     fake.add_argument("--port", type=int, default=8000)
     fake.add_argument("--model-id", default="fake-qwen3")
     fake.add_argument("--expected-tool-parser", default="qwen3")
-    fake.add_argument("--failure-mode", default="healthy", choices=["healthy", "models_500", "chat_500", "chat_invalid_json"])
+    fake.add_argument(
+        "--failure-mode",
+        default="healthy",
+        choices=[
+            "healthy",
+            "models_500",
+            "chat_500",
+            "chat_invalid_json",
+            "empty_response",
+            "partial_response",
+            "rate_limit",
+            "rate_limit_once",
+            "slow_response",
+            "tool_wrong_name",
+            "hallucinated_tool_call",
+            "repetitive_output",
+            "stream_interrupt",
+        ],
+    )
     return parser
 
 
