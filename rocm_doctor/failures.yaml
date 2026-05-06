@@ -1,0 +1,58 @@
+# Failure taxonomy — declarative map of failure_class → candidate repair recipe ids.
+#
+# This drives healing_policy.candidate_recipe_ids() ordering. Adding a new failure
+# class is a YAML edit here (plus, if it's distinct from any existing one, a rule
+# in providers/rules/rules.yaml that emits it).
+
+failures:
+  - failure_class: endpoint_broken
+    description: "endpoint URL or route is broken"
+    candidate_recipe_ids: [update_endpoint_url, fallback_model_provider]
+
+  - failure_class: wrong_endpoint_port
+    description: "configured URL differs from expected URL"
+    candidate_recipe_ids: [update_endpoint_url]
+
+  - failure_class: one_time_rate_limit
+    description: "single observed 429"
+    candidate_recipe_ids: [retry_without_config_change]
+
+  - failure_class: repeated_rate_limit
+    description: "429 persisted across configured retries"
+    candidate_recipe_ids: [increase_retry_backoff, fallback_model_provider]
+
+  - failure_class: timeout
+    description: "request timed out"
+    candidate_recipe_ids: [increase_timeout, lower_health_max_tokens, disable_streaming]
+
+  - failure_class: empty_qwen_output
+    description: "Qwen returned no health content"
+    candidate_recipe_ids: [increase_health_max_tokens, switch_prompt_template]
+
+  - failure_class: instruction_drift
+    description: "health output drifted from sentinel"
+    candidate_recipe_ids: [switch_prompt_template, tighten_expected_health_response]
+
+  - failure_class: repetitive_loop
+    description: "health output repeated in a loop"
+    candidate_recipe_ids: [switch_prompt_template, lower_health_max_tokens]
+
+  - failure_class: broken_streaming
+    description: "streaming response was interrupted or malformed"
+    candidate_recipe_ids: [disable_streaming]
+
+  - failure_class: bad_template
+    description: "configured prompt template is missing or invalid"
+    candidate_recipe_ids: [switch_prompt_template]
+
+  - failure_class: permanent_500
+    description: "provider returned HTTP 5xx after retries"
+    candidate_recipe_ids: [fallback_model_provider, restart_known_service]
+
+  - failure_class: invalid_config
+    description: "config cannot be loaded or validated"
+    candidate_recipe_ids: [restore_last_known_good_config]
+
+  - failure_class: config_invalid
+    description: "config cannot be loaded or validated"
+    candidate_recipe_ids: [restore_last_known_good_config]

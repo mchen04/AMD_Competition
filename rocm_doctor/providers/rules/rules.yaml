@@ -1,0 +1,295 @@
+# Declarative diagnosis rules for the rules-based provider.
+#
+# The engine evaluates rules in order and emits the FIRST match. Each rule has:
+#   when:            condition expressions over the evidence bundle
+#   emit:            DiagnosisResult fields when the condition matches
+#
+# Condition keys:
+#   probe:                      "models" | "chat" | "tool_call" — picks endpoint.<probe>
+#   check:                      a key in health.checks (e.g. "endpoint_models")
+#   check_value:                bool — the expected value of health.checks[check]
+#   check_default:              bool — the default value if check is missing
+#   probe_status:               int  — match probe.status_code
+#   probe_status_min:           int  — match probe.status_code >= value
+#   error_contains_any:         list[str] — match if probe.error contains any
+#   error_is_timeout:           bool — match if probe.error looks like a timeout
+#   error_is_template_failure:  bool — match if probe.error looks like a template failure
+#   endpoint_mismatch:          bool — base_url != expected_base_url (uses profile)
+#   missing_rocm_flags:         bool — endpoint.missing_rocm_device_flags is non-empty
+#
+# The engine resolves rate-limit and similar variants via emit.dynamic_recipes
+# (e.g. rate_limit) which delegates to a small set of helpers.
+
+rules:
+  # ── endpoint.models failures ──────────────────────────────────────────
+  - id: wrong_endpoint_port
+    when:
+      check: endpoint_models
+      check_value: false
+      endpoint_mismatch: true
+    emit:
+      failure_class: wrong_endpoint_port
+      confidence: 0.95
+      evidence:
+        - "GET /v1/models failed for {profile.base_url}"
+        - "expected endpoint is {profile.expected_base_url}"
+      suspected_cause: "Configured endpoint URL does not match the expected endpoint."
+      recommended_recipe_ids: [update_endpoint_url]
+
+  - id: models_rate_limit
+    when:
+      check: endpoint_models
+      check_value: false
+      probe: models
+      probe_status: 429
+    emit:
+      failure_class_dynamic: rate_limit
+      confidence: 0.9
+      probe: models
+      evidence:
+        - "GET /v1/models returned HTTP 429 after {probe.attempts} attempt(s)"
+      suspected_cause: "The provider rate-limited the health check."
+      recipes_dynamic: rate_limit
+
+  - id: models_5xx
+    when:
+      check: endpoint_models
+      check_value: false
+      probe: models
+      probe_status_min: 500
+    emit:
+      failure_class: permanent_500
+      confidence: 0.88
+      probe: models
+      evidence:
+        - "GET /v1/models returned HTTP {probe.status_code} after {probe.attempts} attempt(s)"
+      suspected_cause: "The provider returned a persistent server error."
+      recommended_recipe_ids: [fallback_model_provider, restart_known_service]
+
+  - id: models_timeout
+    when:
+      check: endpoint_models
+      check_value: false
+      probe: models
+      error_is_timeout: true
+    emit:
+      failure_class: timeout
+      confidence: 0.86
+      probe: models
+      evidence:
+        - "GET /v1/models timed out: {probe.error}"
+      suspected_cause: "The provider did not answer before the configured timeout."
+      recommended_recipe_ids: [increase_timeout, increase_retry_backoff]
+
+  - id: models_unreachable
+    when:
+      check: endpoint_models
+      check_value: false
+      probe: models
+    emit:
+      failure_class: endpoint_unreachable
+      confidence: 0.82
+      probe: models
+      evidence:
+        - "GET /v1/models failed: {probe.error}"
+      suspected_cause: "Configured model endpoint is unreachable."
+      missing_evidence: ["process table", "service logs"]
+      recommended_recipe_ids: [fallback_model_provider, restart_known_service]
+
+  # ── context length ────────────────────────────────────────────────────
+  - id: context_length
+    when:
+      check: context_length
+      check_value: false
+      check_default: true
+    emit:
+      failure_class: context_length_too_large
+      confidence: 0.93
+      evidence:
+        - "max_model_len={profile.max_model_len}"
+        - "safe_max_model_len={profile.safe_max_model_len}"
+      suspected_cause: "Configured context length is above the active provider safety threshold."
+      recommended_recipe_ids: [lower_max_model_len]
+
+  # ── chat completion failures ──────────────────────────────────────────
+  - id: chat_template_error
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+      error_is_template_failure: true
+    emit:
+      failure_class: bad_template
+      confidence: 0.94
+      probe: chat
+      evidence:
+        - "health template failed: {probe.error}"
+      suspected_cause: "The configured health prompt template is missing or invalid."
+      recommended_recipe_ids: [switch_prompt_template]
+
+  - id: chat_rate_limit
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+      probe_status: 429
+    emit:
+      failure_class_dynamic: rate_limit
+      confidence: 0.9
+      probe: chat
+      evidence:
+        - "POST /v1/chat/completions returned HTTP 429 after {probe.attempts} attempt(s)"
+      suspected_cause: "The provider rate-limited the health chat request."
+      recipes_dynamic: rate_limit
+
+  - id: chat_5xx
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+      probe_status_min: 500
+    emit:
+      failure_class: permanent_500
+      confidence: 0.88
+      probe: chat
+      evidence:
+        - "POST /v1/chat/completions returned HTTP {probe.status_code} after {probe.attempts} attempt(s)"
+      suspected_cause: "The provider returned a persistent server error."
+      recommended_recipe_ids: [fallback_model_provider, restart_known_service]
+
+  - id: chat_timeout
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+      error_is_timeout: true
+    emit:
+      failure_class: timeout
+      confidence: 0.88
+      probe: chat
+      evidence:
+        - "POST /v1/chat/completions timed out: {probe.error}"
+      suspected_cause: "The health chat did not complete before the configured timeout."
+      recipes_dynamic: chat_timeout
+
+  - id: chat_empty_output
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+      error_contains_any: ["empty chat response content"]
+    emit:
+      failure_class: empty_qwen_output
+      confidence: 0.92
+      probe: chat
+      evidence: ["{probe.error}"]
+      suspected_cause: "The model returned an empty health response, often because reasoning consumed the output budget."
+      recommended_recipe_ids: [increase_health_max_tokens, switch_prompt_template]
+
+  - id: chat_repetitive_loop
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+      error_contains_any: ["repetitive output loop detected"]
+    emit:
+      failure_class: repetitive_loop
+      confidence: 0.92
+      probe: chat
+      evidence: ["{probe.error}"]
+      suspected_cause: "The model repeated tokens instead of returning the health sentinel."
+      recommended_recipe_ids: [switch_prompt_template, lower_health_max_tokens]
+
+  - id: chat_streaming_broken
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+      error_contains_any: ["invalid streaming JSON chunk", "streaming response"]
+    emit:
+      failure_class: broken_streaming
+      confidence: 0.9
+      probe: chat
+      evidence: ["{probe.error}"]
+      suspected_cause: "The streaming health response was interrupted or malformed."
+      recommended_recipe_ids: [disable_streaming]
+
+  - id: chat_instruction_drift
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+      error_contains_any:
+        - "expected health response"
+        - "chat response exceeded"
+        - "hallucinated tool call"
+    emit:
+      failure_class: instruction_drift
+      confidence: 0.9
+      probe: chat
+      evidence: ["{probe.error}"]
+      suspected_cause: "The health prompt did not force the expected sentinel-only response."
+      recommended_recipe_ids: [switch_prompt_template, tighten_expected_health_response]
+
+  - id: chat_unknown
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+    emit:
+      failure_class: unknown_failure
+      confidence: 0.7
+      probe: chat
+      evidence:
+        - "chat completion failed: {probe.error_or_unknown}"
+      suspected_cause: "The model endpoint responded to /v1/models but did not return a valid chat completion."
+      missing_evidence: ["server logs", "provider runtime status"]
+      recommended_recipe_ids: [noop]
+
+  # ── tool-call parser ──────────────────────────────────────────────────
+  - id: tool_parser_mismatch
+    when:
+      check: tool_call_parser
+      check_value: false
+      check_default: true
+    emit:
+      failure_class: tool_parser_mismatch
+      confidence: 0.9
+      probe: tool_call
+      evidence:
+        - "tool_parser={profile.tool_parser}"
+        - "expected_tool_parser={profile.expected_tool_parser}"
+        - "deterministic tool-call check failed: {probe.error_or_unknown}"
+      suspected_cause: "Configured tool parser does not match the model/runtime expectation."
+      recipes_dynamic: tool_parser
+
+  # ── ROCm device flags ─────────────────────────────────────────────────
+  - id: missing_rocm_flags
+    when:
+      check: rocm_device_flags
+      check_value: false
+      check_default: true
+    emit:
+      failure_class: missing_rocm_device_flags
+      confidence: 0.92
+      evidence:
+        - "missing required ROCm launch flags: {missing_rocm_flags_csv}"
+      suspected_cause: "The launch config does not mount required ROCm device nodes."
+      recommended_recipe_ids: [set_rocm_device_flags]
+
+# Fallback when nothing matched and all checks pass.
+default_emit:
+  failure_class: no_failure
+  confidence: 1.0
+  evidence: ["all health checks passed"]
+  suspected_cause: "No active failure detected."
+  recommended_recipe_ids: [noop]

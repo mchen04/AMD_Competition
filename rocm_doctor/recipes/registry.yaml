@@ -1,0 +1,261 @@
+# Repair recipe registry — declarative metadata for every RepairRecipe.
+#
+# Each entry's `id` must match a key in rocm_doctor/recipes/builders.py:BUILDERS,
+# which holds the deterministic change-builder callable. Everything else is data.
+#
+# Fields:
+#   id, description, human_label, tags
+#   supported_failure_classes:        which DiagnosisResult.failure_class entries map here
+#   supported_profile_capabilities:   capabilities the active profile must declare
+#   preconditions:                    docs strings — what must be true to attempt
+#   config_path_templates:            dotted paths the recipe writes (template `{active_model_provider}`)
+#   risk_level:                       one of: none, low, medium, high
+#   rollback_strategy:                what undo looks like
+#   verification_steps:               post-apply checks
+#
+# To add a recipe: append a YAML entry here AND add a builder under recipes/builders.py.
+
+recipes:
+  - id: noop
+    description: "Make no change. Used when the system is healthy or the failure is unactionable."
+    human_label: "No-op"
+    tags: [safe]
+    supported_failure_classes: [no_failure, unknown_failure]
+    supported_profile_capabilities: []
+    preconditions: ["System is already healthy or provider is unavailable."]
+    config_path_templates: []
+    risk_level: none
+    rollback_strategy: "No change was made."
+    verification_steps: ["No verification required."]
+
+  - id: retry_without_config_change
+    description: "Re-run the health check once. Catches transient rate limits with no edit."
+    human_label: "Retry once"
+    tags: [transient, retry]
+    supported_failure_classes: [one_time_rate_limit]
+    supported_profile_capabilities: []
+    preconditions: ["Failure may be transient and a retry has not yet been observed."]
+    config_path_templates: []
+    risk_level: none
+    rollback_strategy: "No change was made."
+    verification_steps: ["rerun health check once"]
+
+  - id: update_endpoint_url
+    description: "Restore the active provider base_url from expected_base_url."
+    human_label: "Restore endpoint URL"
+    tags: [endpoint]
+    supported_failure_classes: [endpoint_broken, endpoint_unreachable, wrong_endpoint_port]
+    supported_profile_capabilities: [models]
+    preconditions: ["active model provider expected_base_url is configured."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.model.endpoint.base_url"
+    risk_level: low
+    rollback_strategy: "Restore the previous active model provider endpoint URL."
+    verification_steps: ["GET /v1/models", "POST /v1/chat/completions"]
+
+  - id: increase_health_max_tokens
+    description: "Raise validation.health_max_tokens for models that need more headroom."
+    human_label: "Raise health_max_tokens"
+    tags: [validation, prompt]
+    supported_failure_classes: [empty_qwen_output]
+    supported_profile_capabilities: [chat_completions]
+    preconditions: ["validation.health_max_tokens is configured."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.validation.health_max_tokens"
+    risk_level: low
+    rollback_strategy: "Restore the previous health_max_tokens value."
+    verification_steps: ["POST /v1/chat/completions health check"]
+
+  - id: lower_health_max_tokens
+    description: "Drop health_max_tokens to suppress over-answering on weak models."
+    human_label: "Lower health_max_tokens"
+    tags: [validation, prompt]
+    supported_failure_classes: [timeout, repetitive_loop]
+    supported_profile_capabilities: [chat_completions]
+    preconditions: ["validation.health_max_tokens is configured above the minimum."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.validation.health_max_tokens"
+    risk_level: low
+    rollback_strategy: "Restore the previous health_max_tokens value."
+    verification_steps: ["POST /v1/chat/completions health check"]
+
+  - id: increase_timeout
+    description: "Raise request.timeout_seconds for slow cold starts and large prompts."
+    human_label: "Raise request timeout"
+    tags: [request, timeout]
+    supported_failure_classes: [timeout]
+    supported_profile_capabilities: [chat_completions]
+    preconditions: ["request.timeout_seconds is configured."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.request.timeout_seconds"
+    risk_level: low
+    rollback_strategy: "Restore the previous request timeout."
+    verification_steps: ["POST /v1/chat/completions health check"]
+
+  - id: increase_retry_backoff
+    description: "Bump retry.backoff_seconds for noisy upstreams."
+    human_label: "Raise retry backoff"
+    tags: [request, retry]
+    supported_failure_classes: [repeated_rate_limit, timeout]
+    supported_profile_capabilities: []
+    preconditions: ["request.retry settings are configured."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.request.retry.backoff_seconds"
+      - "model_providers.{active_model_provider}.request.retry.max_attempts"
+    risk_level: low
+    rollback_strategy: "Restore the previous retry backoff and attempt count."
+    verification_steps: ["rerun health check with updated retry policy"]
+
+  - id: disable_streaming
+    description: "Force request.stream=false when SSE framing breaks tool-call parsing."
+    human_label: "Disable streaming"
+    tags: [request, streaming]
+    supported_failure_classes: [broken_streaming, timeout]
+    supported_profile_capabilities: [chat_completions]
+    preconditions: ["request.stream is enabled."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.request.stream"
+    risk_level: low
+    rollback_strategy: "Restore the previous streaming setting."
+    verification_steps: ["POST /v1/chat/completions without stream=true"]
+
+  - id: switch_prompt_template
+    description: "Fall back to the next health-chat template under templates.health_chat_fallbacks."
+    human_label: "Switch health prompt"
+    tags: [prompt, template]
+    supported_failure_classes: [bad_template, empty_qwen_output, instruction_drift, repetitive_loop]
+    supported_profile_capabilities: [chat_completions]
+    preconditions: ["a fallback health_chat template is configured or bundled."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.templates.health_chat"
+    risk_level: low
+    rollback_strategy: "Restore the previous health_chat template."
+    verification_steps: ["render fallback template", "POST /v1/chat/completions health check"]
+
+  - id: fallback_model_provider
+    description: "Switch active_model_provider to self_healing.fallback_model_provider."
+    human_label: "Fallback to alternate provider"
+    tags: [provider, failover]
+    supported_failure_classes:
+      - permanent_500
+      - repeated_rate_limit
+      - endpoint_broken
+      - endpoint_unreachable
+      - timeout
+    supported_profile_capabilities: []
+    preconditions: ["self_healing.fallback_model_provider names a configured provider."]
+    config_path_templates: ["active_model_provider"]
+    risk_level: medium
+    rollback_strategy: "Restore the previous active_model_provider."
+    verification_steps: ["run health checks against fallback provider"]
+
+  - id: restore_last_known_good_config
+    description: "Roll the workspace back to the most recent verified config snapshot."
+    human_label: "Restore last-known-good config"
+    tags: [recovery, snapshot]
+    supported_failure_classes: [config_invalid, invalid_config]
+    supported_profile_capabilities: []
+    preconditions: ["state contains last_known_good_config."]
+    config_path_templates: []
+    risk_level: low
+    rollback_strategy: "Restore the config that existed before the last-known-good restore."
+    verification_steps: ["reload config", "run health checks"]
+
+  - id: tighten_expected_health_response
+    description: "Replace expected_health_response with a stricter sentinel string."
+    human_label: "Tighten health sentinel"
+    tags: [validation, sentinel]
+    supported_failure_classes: [instruction_drift]
+    supported_profile_capabilities: [chat_completions]
+    preconditions: ["validation.expected_health_response is configured."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.validation.health_response_match"
+      - "model_providers.{active_model_provider}.validation.max_health_response_chars"
+    risk_level: low
+    rollback_strategy: "Restore the previous health response validation settings."
+    verification_steps: ["POST /v1/chat/completions health check"]
+
+  - id: disable_tool_probe_for_weak_model
+    description: "Skip tool_call_parser probe for providers that don't support tool calls."
+    human_label: "Disable tool probe"
+    tags: [tool_calls, probe]
+    supported_failure_classes: [tool_parser_mismatch]
+    supported_profile_capabilities: [tool_calls]
+    preconditions: ["model tool-call probe is enabled for a weak/local model profile."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.model.tool_calling.enabled"
+    risk_level: medium
+    rollback_strategy: "Restore the previous tool-call probe setting."
+    verification_steps: ["run health check with tool-call probe skipped"]
+
+  - id: lower_max_model_len
+    description: "Reduce model.context.max_tokens to fit within the runtime safe ceiling."
+    human_label: "Lower context length"
+    tags: [context]
+    supported_failure_classes: [context_length_too_large]
+    supported_profile_capabilities: [context_length]
+    preconditions: ["active model provider safe context limit is configured."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.model.context.max_tokens"
+    risk_level: low
+    rollback_strategy: "Restore the previous active model provider max context limit."
+    verification_steps: ["config validation", "POST /v1/chat/completions"]
+
+  - id: set_tool_parser
+    description: "Set model.tool_calling.parser to the expected_parser baked into the YAML."
+    human_label: "Set tool parser"
+    tags: [tool_calls, parser]
+    supported_failure_classes: [tool_parser_mismatch]
+    supported_profile_capabilities: [tool_calls]
+    preconditions: ["active model provider expected tool parser is configured."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.model.tool_calling.parser"
+    risk_level: low
+    rollback_strategy: "Restore the previous active model provider tool parser."
+    verification_steps: ["deterministic tool-call check"]
+
+  - id: set_rocm_device_flags
+    description: "Restore launch.required_device_flags before the next service restart."
+    human_label: "Set ROCm device flags"
+    tags: [launch, rocm]
+    supported_failure_classes: [missing_rocm_device_flags]
+    supported_profile_capabilities: [rocm_device_flags]
+    preconditions: ["launch.required_device_flags is configured."]
+    config_path_templates: ["launch.device_flags"]
+    risk_level: low
+    rollback_strategy: "Restore the previous launch.device_flags list."
+    verification_steps: ["config validation", "ROCm device flag check"]
+
+  - id: synthesize_patch
+    description: "Apply a bounded patch synthesized by the diagnosis brain over the union of allowlisted recipe paths."
+    human_label: "Synthesize bounded patch"
+    tags: [synthesis, advanced]
+    supported_failure_classes: []
+    supported_profile_capabilities: []
+    preconditions:
+      - >
+        diagnosis brain proposes a config_patch.changes map of dotted YAML paths;
+        every path must already be in the union of allowlisted paths from the
+        registry, every value must match the existing value's type, and no path
+        may match the credential redaction filter.
+    config_path_templates: []
+    risk_level: medium
+    rollback_strategy: "Restore the pre-patch values for every dotted YAML path the brain edited."
+    verification_steps: ["rerun health check after the synthesized patch is applied"]
+
+  - id: restart_known_service
+    description: "Issue a dry-run restart through service.restart_mode."
+    human_label: "Restart known service"
+    tags: [service, restart]
+    supported_failure_classes:
+      - endpoint_broken
+      - endpoint_unreachable
+      - wrong_endpoint_port
+      - permanent_500
+      - unknown_failure
+    supported_profile_capabilities: [restart]
+    preconditions: ["service.name is configured.", "service.restart_mode is dry-run or fake-service."]
+    config_path_templates: ["service.restart_count", "service.last_restart_dry_run"]
+    risk_level: medium
+    rollback_strategy: "No process restart is performed in dry-run mode; decrement restart_count if needed."
+    verification_steps: ["GET /v1/models", "POST /v1/chat/completions"]

@@ -1,0 +1,406 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ActiveProviderRequest": {
+      "additionalProperties": true,
+      "properties": {
+        "provider_id": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ActiveProviderResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "active_provider": {}
+      },
+      "required": [
+        "active_provider"
+      ],
+      "type": "object"
+    },
+    "CheckRequest": {
+      "additionalProperties": true,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "CheckResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "evidence": {},
+        "health": {}
+      },
+      "required": [
+        "health",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "FailureDTO": {
+      "additionalProperties": true,
+      "properties": {
+        "candidates": {},
+        "description": {},
+        "expectedRecipe": {},
+        "id": {},
+        "label": {},
+        "scenario": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "IncidentDTO": {
+      "additionalProperties": true,
+      "properties": {
+        "durationMs": {},
+        "failure": {},
+        "id": {},
+        "outcome": {},
+        "path": {},
+        "provider": {},
+        "recipe": {},
+        "size": {},
+        "ts": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "IncidentResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "body": {},
+        "id": {},
+        "path": {}
+      },
+      "required": [
+        "id",
+        "body",
+        "path"
+      ],
+      "type": "object"
+    },
+    "ProviderDTO": {
+      "additionalProperties": true,
+      "properties": {
+        "accelerator": {},
+        "active": {},
+        "adapter": {},
+        "backend": {},
+        "baseUrl": {},
+        "capabilities": {},
+        "contextMax": {},
+        "health": {},
+        "id": {},
+        "label": {},
+        "lastChecked": {},
+        "model": {},
+        "note": {},
+        "probes": {},
+        "rocm": {},
+        "runtime": {},
+        "safeContextMax": {},
+        "safeRecipes": {},
+        "status": {},
+        "timeout": {},
+        "toolCalls": {},
+        "toolParser": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "RecipeDTO": {
+      "additionalProperties": true,
+      "properties": {
+        "classes": {},
+        "desc": {},
+        "editFrom": {},
+        "editPath": {},
+        "editTo": {},
+        "humanLabel": {},
+        "id": {},
+        "risk": {},
+        "tags": {},
+        "verifies": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ResetRequest": {
+      "additionalProperties": true,
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "ResetResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "config_path": {},
+        "reset": {}
+      },
+      "required": [
+        "config_path",
+        "reset"
+      ],
+      "type": "object"
+    },
+    "RunRequest": {
+      "additionalProperties": true,
+      "properties": {
+        "provider_name": {},
+        "scenario": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "RunResultResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "after_evidence": {},
+        "before_evidence": {},
+        "diagnosis": {},
+        "diagnosis_provider": {},
+        "duration_ms": {},
+        "error": {},
+        "incident_id": {},
+        "incidents": {},
+        "inject": {},
+        "report_path": {},
+        "run_id": {},
+        "scenario": {},
+        "self_heal": {},
+        "state": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "RunStartedResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "diagnosis_provider": {},
+        "run_id": {},
+        "scenario": {}
+      },
+      "required": [
+        "run_id",
+        "diagnosis_provider",
+        "scenario"
+      ],
+      "type": "object"
+    },
+    "SSEEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {},
+        "event": {},
+        "run_id": {},
+        "seq": {},
+        "ts": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "SnapshotResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "active_provider": {},
+        "config_path": {},
+        "config_yaml": {},
+        "diagnosis_provider": {},
+        "diagnosis_providers": {},
+        "failures": {},
+        "incidents": {},
+        "providers": {},
+        "recipes": {},
+        "scenarios": {},
+        "state_json": {},
+        "template_path": {},
+        "workspace": {}
+      },
+      "required": [
+        "workspace",
+        "incidents",
+        "active_provider",
+        "config_yaml",
+        "diagnosis_provider",
+        "template_path",
+        "config_path",
+        "recipes",
+        "scenarios",
+        "failures",
+        "diagnosis_providers",
+        "state_json",
+        "providers"
+      ],
+      "type": "object"
+    }
+  },
+  "endpoints": {
+    "request": {
+      "POST /api/active-provider": {
+        "additionalProperties": true,
+        "properties": {
+          "provider_id": {}
+        },
+        "required": [],
+        "type": "object"
+      },
+      "POST /api/check": {
+        "additionalProperties": true,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "POST /api/reset": {
+        "additionalProperties": true,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "POST /api/run": {
+        "additionalProperties": true,
+        "properties": {
+          "provider_name": {},
+          "scenario": {}
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "response": {
+      "GET /api/incident/{id}": {
+        "additionalProperties": true,
+        "properties": {
+          "body": {},
+          "id": {},
+          "path": {}
+        },
+        "required": [
+          "id",
+          "body",
+          "path"
+        ],
+        "type": "object"
+      },
+      "GET /api/run/{run_id}": {
+        "additionalProperties": true,
+        "properties": {
+          "after_evidence": {},
+          "before_evidence": {},
+          "diagnosis": {},
+          "diagnosis_provider": {},
+          "duration_ms": {},
+          "error": {},
+          "incident_id": {},
+          "incidents": {},
+          "inject": {},
+          "report_path": {},
+          "run_id": {},
+          "scenario": {},
+          "self_heal": {},
+          "state": {}
+        },
+        "required": [],
+        "type": "object"
+      },
+      "GET /api/snapshot": {
+        "additionalProperties": true,
+        "properties": {
+          "active_provider": {},
+          "config_path": {},
+          "config_yaml": {},
+          "diagnosis_provider": {},
+          "diagnosis_providers": {},
+          "failures": {},
+          "incidents": {},
+          "providers": {},
+          "recipes": {},
+          "scenarios": {},
+          "state_json": {},
+          "template_path": {},
+          "workspace": {}
+        },
+        "required": [
+          "workspace",
+          "incidents",
+          "active_provider",
+          "config_yaml",
+          "diagnosis_provider",
+          "template_path",
+          "config_path",
+          "recipes",
+          "scenarios",
+          "failures",
+          "diagnosis_providers",
+          "state_json",
+          "providers"
+        ],
+        "type": "object"
+      },
+      "POST /api/active-provider": {
+        "additionalProperties": true,
+        "properties": {
+          "active_provider": {}
+        },
+        "required": [
+          "active_provider"
+        ],
+        "type": "object"
+      },
+      "POST /api/check": {
+        "additionalProperties": true,
+        "properties": {
+          "evidence": {},
+          "health": {}
+        },
+        "required": [
+          "health",
+          "evidence"
+        ],
+        "type": "object"
+      },
+      "POST /api/reset": {
+        "additionalProperties": true,
+        "properties": {
+          "config_path": {},
+          "reset": {}
+        },
+        "required": [
+          "config_path",
+          "reset"
+        ],
+        "type": "object"
+      },
+      "POST /api/run": {
+        "additionalProperties": true,
+        "properties": {
+          "diagnosis_provider": {},
+          "run_id": {},
+          "scenario": {}
+        },
+        "required": [
+          "run_id",
+          "diagnosis_provider",
+          "scenario"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "sse_events": [
+    "run.queued",
+    "check.started",
+    "check.failed",
+    "inject.applied",
+    "diagnosis.started",
+    "diagnosis.completed",
+    "repair.applied",
+    "repair.rejected",
+    "verification.completed",
+    "report.written",
+    "done",
+    "error"
+  ],
+  "title": "ROCm Doctor API",
+  "version": "1"
+}

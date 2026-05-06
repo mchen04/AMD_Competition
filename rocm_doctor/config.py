@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,31 @@ from .schemas import RetryPolicy, RuntimeProfile
 
 
 SENSITIVE_KEY_PARTS = ("api_key", "apikey", "token", "secret", "password", "credential")
-DEFAULT_DIAGNOSIS_PROVIDER = "rules"
+
+_DEFAULTS_PATH = Path(__file__).resolve().parent / "defaults.yaml"
+
+
+@lru_cache(maxsize=1)
+def _load_defaults() -> dict[str, Any]:
+    raw = yaml.safe_load(_DEFAULTS_PATH.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{_DEFAULTS_PATH} must be a YAML object")
+    return raw
+
+
+def _defaults() -> dict[str, Any]:
+    return deepcopy(_load_defaults())
+
+
+def _diagnosis_defaults() -> dict[str, Any]:
+    return _defaults().get("diagnosis", {}) or {}
+
+
+def _model_provider_defaults() -> dict[str, Any]:
+    return _defaults().get("model_provider", {}) or {}
+
+
+DEFAULT_DIAGNOSIS_PROVIDER = _load_defaults().get("diagnosis", {}).get("default_provider", "rules")
 
 
 class ConfigError(RuntimeError):
@@ -185,7 +210,8 @@ def _normalize_model_provider(provider_id: str, provider: Any) -> dict[str, Any]
     endpoint.setdefault("wrong_base_url", _bump_default_endpoint(endpoint["base_url"]))
     model.setdefault("context", {})
     context = model["context"]
-    context.setdefault("max_tokens", 2048)
+    default_context_max = (_defaults().get("context", {}) or {}).get("default_max_tokens", 2048)
+    context.setdefault("max_tokens", default_context_max)
     context.setdefault("safe_max_tokens", context["max_tokens"])
     model.setdefault("tool_calling", {})
     tool_calling = model["tool_calling"]
@@ -194,17 +220,19 @@ def _normalize_model_provider(provider_id: str, provider: Any) -> dict[str, Any]
     tool_calling.setdefault("expected_parser", tool_calling["parser"])
     tool_calling.setdefault("parser_header", "X-ROCm-Doctor-Tool-Parser")
 
+    mp_defaults = _model_provider_defaults()
+    default_retry = mp_defaults.get("default_retry", {}) or {}
     data.setdefault("request", {})
     request = data["request"]
-    request.setdefault("timeout_seconds", 1.5)
-    request.setdefault("stream", False)
+    request.setdefault("timeout_seconds", mp_defaults.get("default_request_timeout_seconds", 1.5))
+    request.setdefault("stream", mp_defaults.get("default_stream", False))
     request.setdefault("retry", {})
     retry = request["retry"]
-    retry.setdefault("max_attempts", 1)
-    retry.setdefault("backoff_seconds", 0.0)
-    retry.setdefault("retry_status_codes", [408, 409, 429, 500, 502, 503, 504])
-    retry.setdefault("retry_on_timeout", True)
-    retry.setdefault("retry_on_invalid_json", True)
+    retry.setdefault("max_attempts", default_retry.get("max_attempts", 1))
+    retry.setdefault("backoff_seconds", default_retry.get("backoff_seconds", 0.0))
+    retry.setdefault("retry_status_codes", list(default_retry.get("retry_status_codes", [408, 409, 429, 500, 502, 503, 504])))
+    retry.setdefault("retry_on_timeout", default_retry.get("retry_on_timeout", True))
+    retry.setdefault("retry_on_invalid_json", default_retry.get("retry_on_invalid_json", True))
 
     data.setdefault("templates", {})
     templates = data["templates"]
@@ -228,11 +256,9 @@ def _normalize_model_provider(provider_id: str, provider: Any) -> dict[str, Any]
     repair.setdefault("safe_recipes", ["noop"])
     repair.setdefault("known_failure_signatures", {})
     data.setdefault("validation", {})
-    data["validation"].setdefault("max_health_response_chars", 120)
-    data["validation"].setdefault("max_repeated_token_count", 8)
-    data["validation"].setdefault("health_max_tokens", 32)
-    data["validation"].setdefault("expected_health_response", "ROCM_DOCTOR_OK")
-    data["validation"].setdefault("health_response_match", "case_insensitive")
+    default_validation = mp_defaults.get("default_validation", {}) or {}
+    for key, default_value in default_validation.items():
+        data["validation"].setdefault(key, default_value)
     return data
 
 
@@ -240,65 +266,33 @@ def _normalize_diagnosis(diagnosis: Any) -> dict[str, Any]:
     if not isinstance(diagnosis, dict):
         raise ConfigError("diagnosis must be an object")
     data = deepcopy(diagnosis)
-    data.setdefault("active_provider", DEFAULT_DIAGNOSIS_PROVIDER)
+    diag_defaults = _diagnosis_defaults()
+    data.setdefault("active_provider", diag_defaults.get("default_provider", "rules"))
     data.setdefault("providers", {})
     providers = data["providers"]
     providers.setdefault("rules", {"type": "rules"})
     providers.setdefault("fake", {"type": "fake", "mode": "normal"})
+    type_defaults = diag_defaults.get("providers", {}) or {}
+    template_defaults = diag_defaults.get("templates", {}) or {}
+    retry_defaults = diag_defaults.get("retry", {}) or {}
+
     for provider_id, provider in list(providers.items()):
         if not isinstance(provider, dict):
             raise ConfigError(f"diagnosis provider {provider_id} must be an object")
         provider.setdefault("type", str(provider_id))
-        if provider["type"] == "openai-responses":
-            provider.setdefault("endpoint", "https://api.openai.com/v1/responses")
-            provider.setdefault("api_key_env", "OPENAI_API_KEY")
-            provider.setdefault("model", "gpt-5.3-codex")
-            provider.setdefault("model_env", "ROCM_DOCTOR_OPENAI_MODEL")
-            provider.setdefault("timeout_seconds", 30.0)
+        defaults_for_type = type_defaults.get(provider["type"]) or {}
+        for key, default_value in defaults_for_type.items():
+            provider.setdefault(key, deepcopy(default_value))
+        if provider["type"] in {"openai-responses", "anthropic-messages", "openai-chat-completions"}:
             provider.setdefault("retry", {})
-            provider["retry"].setdefault("max_attempts", 1)
-            provider["retry"].setdefault("backoff_seconds", 0.0)
-            provider["retry"].setdefault("retry_status_codes", [408, 409, 429, 500, 502, 503, 504])
-            provider["retry"].setdefault("retry_on_timeout", True)
-            provider["retry"].setdefault("retry_on_invalid_json", True)
+            for key, default_value in retry_defaults.items():
+                if key == "retry_status_codes":
+                    provider["retry"].setdefault(key, list(default_value))
+                else:
+                    provider["retry"].setdefault(key, default_value)
             provider.setdefault("templates", {})
-            provider["templates"].setdefault("diagnosis_system", "../templates/openai_diagnosis_system.j2")
-            provider["templates"].setdefault("repair_system", "../templates/openai_repair_system.j2")
-        elif provider["type"] == "anthropic-messages":
-            provider.setdefault("endpoint", "https://api.anthropic.com/v1/messages")
-            provider.setdefault("api_key_env", "ANTHROPIC_API_KEY")
-            provider.setdefault("api_version", "2023-06-01")
-            provider.setdefault("model", "claude-sonnet-4-6")
-            provider.setdefault("model_env", "ROCM_DOCTOR_ANTHROPIC_MODEL")
-            provider.setdefault("timeout_seconds", 30.0)
-            provider.setdefault("max_tokens", 1024)
-            provider.setdefault("retry", {})
-            provider["retry"].setdefault("max_attempts", 1)
-            provider["retry"].setdefault("backoff_seconds", 0.0)
-            provider["retry"].setdefault("retry_status_codes", [408, 409, 429, 500, 502, 503, 504])
-            provider["retry"].setdefault("retry_on_timeout", True)
-            provider["retry"].setdefault("retry_on_invalid_json", True)
-            provider.setdefault("templates", {})
-            provider["templates"].setdefault("diagnosis_system", "../templates/openai_diagnosis_system.j2")
-            provider["templates"].setdefault("repair_system", "../templates/openai_repair_system.j2")
-        elif provider["type"] == "openai-chat-completions":
-            provider.setdefault("base_url", "https://api.openai.com/v1")
-            provider.setdefault("api_key_env", "OPENAI_API_KEY")
-            provider.setdefault("model", "gpt-4o-mini")
-            provider.setdefault("model_env", "ROCM_DOCTOR_OPENAI_COMPATIBLE_MODEL")
-            provider.setdefault("timeout_seconds", 30.0)
-            provider.setdefault("require_api_key", True)
-            provider.setdefault("supports_json_schema", True)
-            provider.setdefault("supports_json_object", True)
-            provider.setdefault("retry", {})
-            provider["retry"].setdefault("max_attempts", 1)
-            provider["retry"].setdefault("backoff_seconds", 0.0)
-            provider["retry"].setdefault("retry_status_codes", [408, 409, 429, 500, 502, 503, 504])
-            provider["retry"].setdefault("retry_on_timeout", True)
-            provider["retry"].setdefault("retry_on_invalid_json", True)
-            provider.setdefault("templates", {})
-            provider["templates"].setdefault("diagnosis_system", "../templates/openai_diagnosis_system.j2")
-            provider["templates"].setdefault("repair_system", "../templates/openai_repair_system.j2")
+            for key, default_value in template_defaults.items():
+                provider["templates"].setdefault(key, default_value)
     if data["active_provider"] not in providers:
         raise ConfigError(f"active diagnosis provider is not configured: {data['active_provider']}")
     return data

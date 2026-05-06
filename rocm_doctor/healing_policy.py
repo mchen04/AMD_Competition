@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from .config import get_active_profile
 from .recipes import RECIPE_REGISTRY
@@ -17,47 +20,24 @@ class FailureTaxonomyEntry:
     candidate_recipe_ids: tuple[str, ...]
 
 
-FAILURE_TAXONOMY: dict[str, FailureTaxonomyEntry] = {
-    "endpoint_broken": FailureTaxonomyEntry(
-        "endpoint_broken", "endpoint URL or route is broken", ("update_endpoint_url", "fallback_model_provider")
-    ),
-    "wrong_endpoint_port": FailureTaxonomyEntry(
-        "wrong_endpoint_port", "configured URL differs from expected URL", ("update_endpoint_url",)
-    ),
-    "one_time_rate_limit": FailureTaxonomyEntry(
-        "one_time_rate_limit", "single observed 429", ("retry_without_config_change",)
-    ),
-    "repeated_rate_limit": FailureTaxonomyEntry(
-        "repeated_rate_limit", "429 persisted across configured retries", ("increase_retry_backoff", "fallback_model_provider")
-    ),
-    "timeout": FailureTaxonomyEntry(
-        "timeout", "request timed out", ("increase_timeout", "lower_health_max_tokens", "disable_streaming")
-    ),
-    "empty_qwen_output": FailureTaxonomyEntry(
-        "empty_qwen_output", "Qwen returned no health content", ("increase_health_max_tokens", "switch_prompt_template")
-    ),
-    "instruction_drift": FailureTaxonomyEntry(
-        "instruction_drift", "health output drifted from sentinel", ("switch_prompt_template", "tighten_expected_health_response")
-    ),
-    "repetitive_loop": FailureTaxonomyEntry(
-        "repetitive_loop", "health output repeated in a loop", ("switch_prompt_template", "lower_health_max_tokens")
-    ),
-    "broken_streaming": FailureTaxonomyEntry(
-        "broken_streaming", "streaming response was interrupted or malformed", ("disable_streaming",)
-    ),
-    "bad_template": FailureTaxonomyEntry(
-        "bad_template", "configured prompt template is missing or invalid", ("switch_prompt_template",)
-    ),
-    "permanent_500": FailureTaxonomyEntry(
-        "permanent_500", "provider returned HTTP 5xx after retries", ("fallback_model_provider", "restart_known_service")
-    ),
-    "invalid_config": FailureTaxonomyEntry(
-        "invalid_config", "config cannot be loaded or validated", ("restore_last_known_good_config",)
-    ),
-    "config_invalid": FailureTaxonomyEntry(
-        "config_invalid", "config cannot be loaded or validated", ("restore_last_known_good_config",)
-    ),
-}
+_FAILURES_PATH = Path(__file__).resolve().parent / "failures.yaml"
+
+
+@lru_cache(maxsize=1)
+def _load_taxonomy() -> dict[str, FailureTaxonomyEntry]:
+    raw = yaml.safe_load(_FAILURES_PATH.read_text(encoding="utf-8")) or {}
+    out: dict[str, FailureTaxonomyEntry] = {}
+    for entry in raw.get("failures", []) or []:
+        fc = str(entry["failure_class"])
+        out[fc] = FailureTaxonomyEntry(
+            failure_class=fc,
+            description=str(entry.get("description", "")),
+            candidate_recipe_ids=tuple(str(r) for r in entry.get("candidate_recipe_ids", []) or []),
+        )
+    return out
+
+
+FAILURE_TAXONOMY: dict[str, FailureTaxonomyEntry] = _load_taxonomy()
 
 
 def candidate_recipe_ids(

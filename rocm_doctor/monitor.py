@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from .config import get_active_profile, load_config, redact_config
 from .model_providers import ProbeResult, get_model_provider_adapter
@@ -9,7 +12,13 @@ from .schemas import EvidenceBundle, HealthCheckResult, RuntimeProfile, to_jsona
 from .timeutil import utc_now
 
 
-DEFAULT_TIMEOUT_SECONDS = 1.5
+@lru_cache(maxsize=1)
+def _default_timeout() -> float:
+    raw = yaml.safe_load((Path(__file__).resolve().parent / "defaults.yaml").read_text(encoding="utf-8")) or {}
+    return float((raw.get("monitor", {}) or {}).get("default_timeout_seconds", 1.5))
+
+
+DEFAULT_TIMEOUT_SECONDS = _default_timeout()
 
 
 def run_check(
