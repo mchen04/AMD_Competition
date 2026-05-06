@@ -1,4 +1,5 @@
 import { useApp } from "../../state/AppContext";
+import { ConfigPicker } from "./ConfigPicker";
 import { Dropdown } from "../common/Dropdown";
 import { Icon } from "../common/Icon";
 import type { Route } from "../../router";
@@ -35,6 +36,7 @@ export function Topbar({ route, onCheck, onHeal, onReset }: TopbarProps) {
         <span className="now">{ROUTE_LABEL[route]}</span>
       </div>
       <div className="topbar-spacer" />
+      <ConfigPicker />
       <Dropdown
         triggerIcon="flask"
         triggerLabel={`diagnose: ${diagnosisProvider}`}

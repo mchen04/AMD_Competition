@@ -144,6 +144,40 @@ export interface ActiveProviderResponse {
   active_provider: string;
 }
 
+export interface ConfigChoiceDTO {
+  id: string;
+  label: string;
+  path: string;
+  source: "bundled" | "user";
+  current: boolean;
+  valid: boolean;
+  error: string | null;
+  providers: number;
+  provider_ids: string[];
+  active: string;
+  diagnosis_active: string;
+}
+
+export interface ConfigsListResponse {
+  bundled: ConfigChoiceDTO[];
+  user: ConfigChoiceDTO[];
+  current_path: string;
+  user_dir: string;
+}
+
+export interface ConfigSelectResponse {
+  selected: string;
+  path: string;
+  diagnosis_provider: string;
+}
+
+export interface ConfigImportResponse {
+  imported: string;
+  name: string;
+  path: string;
+  selected: boolean;
+}
+
 export interface IncidentResponse {
   id: string;
   path: string;

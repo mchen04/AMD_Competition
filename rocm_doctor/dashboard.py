@@ -20,6 +20,7 @@ API:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import threading
 import time
@@ -33,7 +34,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from .api.schemas import validate_request
-from .config import load_config, save_config
+from .config import ConfigError, load_config, save_config
 from .failure_injection import SCENARIOS, inject_failure
 from .healing_policy import FAILURE_TAXONOMY
 from .logging import get_logger
@@ -50,7 +51,11 @@ _REPO_ROOT = _PACKAGE_ROOT.parent
 _WEB_DIST = _REPO_ROOT / "web" / "dist"
 _WEB_LEGACY = _REPO_ROOT / "web"
 DEFAULT_WEB_ROOT = _WEB_DIST if (_WEB_DIST / "index.html").exists() else _WEB_LEGACY
-DEFAULT_CONFIG = _REPO_ROOT / "demo" / "rocm-doctor.yaml"
+BUNDLED_CONFIG_DIR = _REPO_ROOT / "demo"
+DEFAULT_CONFIG = BUNDLED_CONFIG_DIR / "rocm-doctor.yaml"
+
+_USER_CONFIG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(?:yaml|yml)$")
+_WORKING_CONFIG_NAME = ".rocm-doctor.dashboard.yaml"
 
 _LOCK = threading.Lock()
 
@@ -265,14 +270,37 @@ class DashboardState:
 
     def __init__(self, template_config: Path, diagnosis_provider: str = "rules") -> None:
         self.template_config = template_config.resolve()
+        # Workspace is anchored to the original template's parent and never moves
+        # when the template is later rebound, so the working copy, reports, and
+        # incident history stay in one place across config switches.
         self.workspace = self.template_config.parent
-        self.working_config = self.workspace / ".rocm-doctor.dashboard.yaml"
+        self.user_config_dir = self.workspace / "user-configs"
+        self.working_config = self.workspace / _WORKING_CONFIG_NAME
         self.state_file = ".rocm-doctor.dashboard-state.json"
         self.reports_subdir = "reports/dashboard"
         self.diagnosis_provider = diagnosis_provider
         self.run_durations: OrderedDict[str, int] = OrderedDict()
         self.runs: OrderedDict[str, _RunRecord] = OrderedDict()
         self.reset()
+
+    def rebind(self, template_config: Path) -> None:
+        """Point at a new template YAML. Workspace, runs, and reports stay put."""
+        new_template = template_config.resolve()
+        if not new_template.is_file():
+            raise FileNotFoundError(f"config template not found: {new_template}")
+        # Validate the YAML before swapping in, so a bad pick can't poison state.
+        cfg = load_config(new_template)
+        self.template_config = new_template
+        self.reset()
+        # Fall back to a valid diagnosis provider if the new YAML doesn't define
+        # whatever the previous template had.
+        diagnosis_providers = (cfg.get("diagnosis", {}) or {}).get("providers", {}) or {}
+        if self.diagnosis_provider not in diagnosis_providers:
+            fallback = (cfg.get("diagnosis", {}) or {}).get("active_provider")
+            if fallback and fallback in diagnosis_providers:
+                self.diagnosis_provider = fallback
+            elif diagnosis_providers:
+                self.diagnosis_provider = next(iter(diagnosis_providers))
 
     def record_duration(self, incident_id: str | None, duration_ms: int) -> None:
         if not incident_id:
@@ -469,6 +497,152 @@ def _api_reset(state: DashboardState, _body: dict, _query: dict, _route: dict) -
     return {"reset": True, "config_path": str(state.working_config)}
 
 
+# ── Config discovery / switching / import ───────────────────────────────
+
+
+def _yaml_files(directory: Path) -> list[Path]:
+    if not directory.is_dir():
+        return []
+    out: list[Path] = []
+    for path in sorted(directory.iterdir()):
+        if not path.is_file():
+            continue
+        if path.name.startswith("."):
+            continue
+        if path.name == _WORKING_CONFIG_NAME:
+            continue
+        if path.suffix.lower() not in (".yaml", ".yml"):
+            continue
+        out.append(path)
+    return out
+
+
+def _config_summary(path: Path) -> dict[str, Any]:
+    """Best-effort metadata used in the picker (provider count, active id)."""
+    try:
+        cfg = load_config(path)
+    except ConfigError as exc:
+        return {"valid": False, "error": str(exc), "providers": 0, "active": ""}
+    providers = list((cfg.get("model_providers") or {}).keys())
+    return {
+        "valid": True,
+        "error": None,
+        "providers": len(providers),
+        "provider_ids": providers,
+        "active": str(cfg.get("active_model_provider") or ""),
+        "diagnosis_active": str((cfg.get("diagnosis") or {}).get("active_provider") or ""),
+    }
+
+
+def _config_dto(path: Path, source: str, current_template: Path) -> dict[str, Any]:
+    summary = _config_summary(path)
+    return {
+        "id": path.stem,
+        "label": path.name,
+        "path": str(path.resolve()),
+        "source": source,
+        "current": path.resolve() == current_template.resolve(),
+        **summary,
+    }
+
+
+def _api_configs(state: DashboardState, _body: dict, _query: dict, _route: dict) -> dict:
+    bundled = [
+        _config_dto(p, "bundled", state.template_config)
+        for p in _yaml_files(BUNDLED_CONFIG_DIR)
+    ]
+    user = [
+        _config_dto(p, "user", state.template_config)
+        for p in _yaml_files(state.user_config_dir)
+    ]
+    return {
+        "bundled": bundled,
+        "user": user,
+        "current_path": str(state.template_config),
+        "user_dir": str(state.user_config_dir),
+    }
+
+
+def _resolve_config_choice(state: DashboardState, body: dict) -> Path:
+    """Map a request body to a YAML path the user is allowed to load."""
+    requested_path = body.get("path")
+    requested_id = body.get("id")
+    requested_source = body.get("source")
+    candidates = _yaml_files(BUNDLED_CONFIG_DIR) + _yaml_files(state.user_config_dir)
+    if requested_path:
+        target = Path(str(requested_path)).resolve()
+        for candidate in candidates:
+            if candidate.resolve() == target:
+                return candidate
+        raise ValueError(f"config path not in allowed dirs: {requested_path}")
+    if requested_id:
+        if requested_source == "bundled":
+            pool = _yaml_files(BUNDLED_CONFIG_DIR)
+        elif requested_source == "user":
+            pool = _yaml_files(state.user_config_dir)
+        else:
+            pool = candidates
+        for candidate in pool:
+            if candidate.stem == requested_id:
+                return candidate
+        raise ValueError(f"unknown config id: {requested_id}")
+    raise ValueError("config select requires 'id' or 'path'")
+
+
+def _api_configs_select(state: DashboardState, body: dict, _query: dict, _route: dict) -> dict:
+    target = _resolve_config_choice(state, body)
+    try:
+        state.rebind(target)
+    except ConfigError as exc:
+        raise ValueError(f"selected config is invalid: {exc}") from exc
+    return {
+        "selected": target.stem,
+        "path": str(state.template_config),
+        "diagnosis_provider": state.diagnosis_provider,
+    }
+
+
+def _api_configs_import(state: DashboardState, body: dict, _query: dict, _route: dict) -> dict:
+    name = str(body.get("name") or "").strip()
+    yaml_text = body.get("yaml")
+    if not name:
+        raise ValueError("name required")
+    if not yaml_text or not isinstance(yaml_text, str):
+        raise ValueError("yaml body required (string)")
+    if not name.endswith((".yaml", ".yml")):
+        name = f"{name}.yaml"
+    if not _USER_CONFIG_NAME_RE.match(name):
+        raise ValueError(
+            "name must be alphanumeric (with . _ -), end in .yaml/.yml, and contain no path separators"
+        )
+    state.user_config_dir.mkdir(parents=True, exist_ok=True)
+    target = (state.user_config_dir / name).resolve()
+    if state.user_config_dir.resolve() not in target.parents:
+        raise ValueError("invalid path")
+    overwrite = bool(body.get("overwrite"))
+    if target.exists() and not overwrite:
+        raise ValueError(f"{name} already exists (set overwrite=true to replace)")
+    target.write_text(yaml_text, encoding="utf-8")
+    try:
+        load_config(target)
+    except ConfigError as exc:
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        raise ValueError(f"yaml did not validate: {exc}") from exc
+    selected = False
+    if bool(body.get("select")):
+        state.rebind(target)
+        selected = True
+    return {
+        "imported": target.stem,
+        "name": target.name,
+        "path": str(target),
+        "selected": selected,
+    }
+
+
 def _api_active_provider(state: DashboardState, body: dict, _query: dict, _route: dict) -> dict:
     pid = body.get("provider_id")
     if not pid:
@@ -501,6 +675,9 @@ ROUTES: list[tuple[str, str, HandlerFn, str | None]] = [
     ("GET", "/api/run/{run_id}", _api_run_result, None),
     ("POST", "/api/reset", _api_reset, "POST /api/reset"),
     ("POST", "/api/active-provider", _api_active_provider, "POST /api/active-provider"),
+    ("GET", "/api/configs", _api_configs, None),
+    ("POST", "/api/configs/select", _api_configs_select, "POST /api/configs/select"),
+    ("POST", "/api/configs/import", _api_configs_import, "POST /api/configs/import"),
     ("GET", "/api/incident/{id}", _api_incident, None),
 ]
 

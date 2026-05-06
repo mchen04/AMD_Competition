@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { api, ApiError } from "../api/client";
-import type { SnapshotResponse } from "../api/types";
+import type { ConfigImportResponse, ConfigsListResponse, SnapshotResponse } from "../api/types";
 
 interface AppContextValue {
   snapshot: SnapshotResponse | null;
@@ -13,6 +13,15 @@ interface AppContextValue {
   setActiveProviderId: (id: string) => Promise<void>;
   diagnosisProvider: string;
   setDiagnosisProvider: (id: string) => void;
+  configs: ConfigsListResponse | null;
+  loadConfigs: () => Promise<ConfigsListResponse | null>;
+  selectConfig: (choice: { id?: string; path?: string; source?: string }) => Promise<void>;
+  importConfig: (payload: {
+    name: string;
+    yaml: string;
+    overwrite?: boolean;
+    select?: boolean;
+  }) => Promise<ConfigImportResponse>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -24,6 +33,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeProviderId, setActiveProviderIdState] = useState<string>("");
   const [diagnosisProvider, setDiagnosisProvider] = useState<string>("rules");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [configs, setConfigs] = useState<ConfigsListResponse | null>(null);
 
   const applySnapshot = useCallback((data: SnapshotResponse) => {
     setSnapshot(data);
@@ -66,6 +76,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
+  const loadConfigs = useCallback(async () => {
+    try {
+      const list = await api.listConfigs();
+      setConfigs(list);
+      return list;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const selectConfig = useCallback(
+    async (choice: { id?: string; path?: string; source?: string }) => {
+      await api.selectConfig(choice);
+      await Promise.all([refresh(), loadConfigs()]);
+    },
+    [refresh, loadConfigs],
+  );
+
+  const importConfig = useCallback(
+    async (payload: { name: string; yaml: string; overwrite?: boolean; select?: boolean }) => {
+      const result = await api.importConfig(payload);
+      await Promise.all([refresh(), loadConfigs()]);
+      return result;
+    },
+    [refresh, loadConfigs],
+  );
+
   const value = useMemo<AppContextValue>(
     () => ({
       snapshot,
@@ -77,6 +114,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setActiveProviderId,
       diagnosisProvider,
       setDiagnosisProvider,
+      configs,
+      loadConfigs,
+      selectConfig,
+      importConfig,
     }),
     [
       snapshot,
@@ -87,6 +128,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       activeProviderId,
       setActiveProviderId,
       diagnosisProvider,
+      configs,
+      loadConfigs,
+      selectConfig,
+      importConfig,
     ],
   );
 

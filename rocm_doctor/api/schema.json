@@ -37,6 +37,91 @@
       ],
       "type": "object"
     },
+    "ConfigChoiceDTO": {
+      "additionalProperties": true,
+      "properties": {
+        "active": {},
+        "current": {},
+        "diagnosis_active": {},
+        "error": {},
+        "id": {},
+        "label": {},
+        "path": {},
+        "provider_ids": {},
+        "providers": {},
+        "source": {},
+        "valid": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ConfigImportRequest": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {},
+        "overwrite": {},
+        "select": {},
+        "yaml": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ConfigImportResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "imported": {},
+        "name": {},
+        "path": {},
+        "selected": {}
+      },
+      "required": [
+        "path",
+        "selected",
+        "name",
+        "imported"
+      ],
+      "type": "object"
+    },
+    "ConfigSelectRequest": {
+      "additionalProperties": true,
+      "properties": {
+        "id": {},
+        "path": {},
+        "source": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ConfigSelectResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "diagnosis_provider": {},
+        "path": {},
+        "selected": {}
+      },
+      "required": [
+        "selected",
+        "diagnosis_provider",
+        "path"
+      ],
+      "type": "object"
+    },
+    "ConfigsListResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "bundled": {},
+        "current_path": {},
+        "user": {},
+        "user_dir": {}
+      },
+      "required": [
+        "user_dir",
+        "bundled",
+        "user",
+        "current_path"
+      ],
+      "type": "object"
+    },
     "FailureDTO": {
       "additionalProperties": true,
       "properties": {
@@ -139,8 +224,8 @@
         "reset": {}
       },
       "required": [
-        "config_path",
-        "reset"
+        "reset",
+        "config_path"
       ],
       "type": "object"
     },
@@ -183,8 +268,8 @@
       },
       "required": [
         "run_id",
-        "diagnosis_provider",
-        "scenario"
+        "scenario",
+        "diagnosis_provider"
       ],
       "type": "object"
     },
@@ -218,19 +303,19 @@
         "workspace": {}
       },
       "required": [
-        "workspace",
-        "incidents",
-        "active_provider",
-        "config_yaml",
-        "diagnosis_provider",
-        "template_path",
-        "config_path",
-        "recipes",
         "scenarios",
-        "failures",
-        "diagnosis_providers",
+        "incidents",
+        "recipes",
+        "providers",
+        "config_path",
+        "active_provider",
         "state_json",
-        "providers"
+        "diagnosis_providers",
+        "diagnosis_provider",
+        "config_yaml",
+        "template_path",
+        "workspace",
+        "failures"
       ],
       "type": "object"
     }
@@ -251,6 +336,27 @@
         "required": [],
         "type": "object"
       },
+      "POST /api/configs/import": {
+        "additionalProperties": true,
+        "properties": {
+          "name": {},
+          "overwrite": {},
+          "select": {},
+          "yaml": {}
+        },
+        "required": [],
+        "type": "object"
+      },
+      "POST /api/configs/select": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {},
+          "path": {},
+          "source": {}
+        },
+        "required": [],
+        "type": "object"
+      },
       "POST /api/reset": {
         "additionalProperties": true,
         "properties": {},
@@ -268,6 +374,22 @@
       }
     },
     "response": {
+      "GET /api/configs": {
+        "additionalProperties": true,
+        "properties": {
+          "bundled": {},
+          "current_path": {},
+          "user": {},
+          "user_dir": {}
+        },
+        "required": [
+          "user_dir",
+          "bundled",
+          "user",
+          "current_path"
+        ],
+        "type": "object"
+      },
       "GET /api/incident/{id}": {
         "additionalProperties": true,
         "properties": {
@@ -321,19 +443,19 @@
           "workspace": {}
         },
         "required": [
-          "workspace",
-          "incidents",
-          "active_provider",
-          "config_yaml",
-          "diagnosis_provider",
-          "template_path",
-          "config_path",
-          "recipes",
           "scenarios",
-          "failures",
-          "diagnosis_providers",
+          "incidents",
+          "recipes",
+          "providers",
+          "config_path",
+          "active_provider",
           "state_json",
-          "providers"
+          "diagnosis_providers",
+          "diagnosis_provider",
+          "config_yaml",
+          "template_path",
+          "workspace",
+          "failures"
         ],
         "type": "object"
       },
@@ -359,6 +481,36 @@
         ],
         "type": "object"
       },
+      "POST /api/configs/import": {
+        "additionalProperties": true,
+        "properties": {
+          "imported": {},
+          "name": {},
+          "path": {},
+          "selected": {}
+        },
+        "required": [
+          "path",
+          "selected",
+          "name",
+          "imported"
+        ],
+        "type": "object"
+      },
+      "POST /api/configs/select": {
+        "additionalProperties": true,
+        "properties": {
+          "diagnosis_provider": {},
+          "path": {},
+          "selected": {}
+        },
+        "required": [
+          "selected",
+          "diagnosis_provider",
+          "path"
+        ],
+        "type": "object"
+      },
       "POST /api/reset": {
         "additionalProperties": true,
         "properties": {
@@ -366,8 +518,8 @@
           "reset": {}
         },
         "required": [
-          "config_path",
-          "reset"
+          "reset",
+          "config_path"
         ],
         "type": "object"
       },
@@ -380,8 +532,8 @@
         },
         "required": [
           "run_id",
-          "diagnosis_provider",
-          "scenario"
+          "scenario",
+          "diagnosis_provider"
         ],
         "type": "object"
       }

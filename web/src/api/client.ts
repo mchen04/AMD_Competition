@@ -1,6 +1,9 @@
 import type {
   ActiveProviderResponse,
   CheckResponse,
+  ConfigImportResponse,
+  ConfigSelectResponse,
+  ConfigsListResponse,
   IncidentResponse,
   ResetResponse,
   RunResultResponse,
@@ -59,4 +62,15 @@ export const api = {
   },
   runResult: (runId: string) => request<RunResultResponse>(`/api/run/${encodeURIComponent(runId)}`),
   incident: (id: string) => request<IncidentResponse>(`/api/incident/${encodeURIComponent(id)}`),
+  listConfigs: () => request<ConfigsListResponse>("/api/configs"),
+  selectConfig: (choice: { id?: string; path?: string; source?: string }) =>
+    request<ConfigSelectResponse>("/api/configs/select", {
+      method: "POST",
+      body: JSON.stringify(choice),
+    }),
+  importConfig: (payload: { name: string; yaml: string; overwrite?: boolean; select?: boolean }) =>
+    request<ConfigImportResponse>("/api/configs/import", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };

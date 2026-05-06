@@ -34,6 +34,19 @@ class ActiveProviderRequest(TypedDict, total=False):
     provider_id: str
 
 
+class ConfigSelectRequest(TypedDict, total=False):
+    id: str
+    path: str
+    source: str
+
+
+class ConfigImportRequest(TypedDict, total=False):
+    name: str
+    yaml: str
+    overwrite: bool
+    select: bool
+
+
 # ── Response bodies ───────────────────────────────────────────────────
 
 
@@ -149,6 +162,40 @@ class ActiveProviderResponse(TypedDict):
     active_provider: str
 
 
+class ConfigChoiceDTO(TypedDict, total=False):
+    id: str
+    label: str
+    path: str
+    source: str
+    current: bool
+    valid: bool
+    error: str | None
+    providers: int
+    provider_ids: list[str]
+    active: str
+    diagnosis_active: str
+
+
+class ConfigsListResponse(TypedDict):
+    bundled: list[ConfigChoiceDTO]
+    user: list[ConfigChoiceDTO]
+    current_path: str
+    user_dir: str
+
+
+class ConfigSelectResponse(TypedDict):
+    selected: str
+    path: str
+    diagnosis_provider: str
+
+
+class ConfigImportResponse(TypedDict):
+    imported: str
+    name: str
+    path: str
+    selected: bool
+
+
 class IncidentResponse(TypedDict):
     id: str
     path: str
@@ -170,6 +217,8 @@ API_REQUEST_SCHEMAS: dict[str, type[TypedDict]] = {  # type: ignore[type-arg]
     "POST /api/run": RunRequest,
     "POST /api/reset": ResetRequest,
     "POST /api/active-provider": ActiveProviderRequest,
+    "POST /api/configs/select": ConfigSelectRequest,
+    "POST /api/configs/import": ConfigImportRequest,
 }
 
 
@@ -180,6 +229,9 @@ API_RESPONSE_SCHEMAS: dict[str, type[TypedDict]] = {  # type: ignore[type-arg]
     "GET /api/run/{run_id}": RunResultResponse,
     "POST /api/reset": ResetResponse,
     "POST /api/active-provider": ActiveProviderResponse,
+    "GET /api/configs": ConfigsListResponse,
+    "POST /api/configs/select": ConfigSelectResponse,
+    "POST /api/configs/import": ConfigImportResponse,
     "GET /api/incident/{id}": IncidentResponse,
 }
 
@@ -290,7 +342,7 @@ def build_schema_document() -> dict[str, Any]:
     for td in {*API_REQUEST_SCHEMAS.values(), *API_RESPONSE_SCHEMAS.values()}:
         typeddef_table[td.__name__] = _typeddict_to_json_schema(td)
     # Also include the inner DTOs for codegen.
-    for td in (ProviderDTO, RecipeDTO, FailureDTO, IncidentDTO, SSEEvent):
+    for td in (ProviderDTO, RecipeDTO, FailureDTO, IncidentDTO, ConfigChoiceDTO, SSEEvent):
         typeddef_table[td.__name__] = _typeddict_to_json_schema(td)
     return {
         "$schema": "http://json-schema.org/draft-07/schema#",
