@@ -30,6 +30,18 @@ Run the harness in another terminal:
 
 Use a copy of the demo config when you want to mutate it repeatedly.
 
+Open the web console (static React app under `web/`, served by Python's stdlib HTTP server):
+
+```bash
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor dashboard --port 8765
+```
+
+Then visit `http://localhost:8765/`. The console surfaces all 16 failure classes from `healing_policy.FAILURE_TAXONOMY` and the 17 recipes from `recipes.py`, and animates the `check → diagnose → heal → verify → report` loop for any injected failure.
+
+The dashboard binds against an isolated working copy of the supplied template config (`<workspace>/.rocm-doctor.dashboard.yaml`) and writes incident reports under `<workspace>/reports/dashboard/`, so the template config and CLI state are never mutated by clicks in the UI. POST `/api/reset` restores the working copy from the template.
+
+When scripting browser tests (e.g. via `agent-browser`), prefer `find text "<chip-label>" click` or a direct `eval "(() => Array.from(document.querySelectorAll('.failure-grid .chip')).find(b => b.textContent.trim() === '<id>').click())()"` over `click @<ref>` — React 18's delegated event listener can ignore the `@ref` form when refs go stale across re-renders. Real human clicks are unaffected.
+
 Run the full no-AMD local validation path:
 
 ```bash

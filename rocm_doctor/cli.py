@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .adversarial_proxy import ADVERSARIAL_FAILURE_MODES, serve_forever as serve_adversarial_proxy
 from .config import ConfigError
+from .dashboard import serve_forever as serve_dashboard
 from .failure_injection import SCENARIOS, inject_failure
 from .fake_endpoint import serve_forever
 from .operations import check_config, diagnose_config, heal_config, self_heal_config, verify_config
@@ -66,6 +67,14 @@ def main(argv: list[str] | None = None) -> int:
                 slow_response_seconds=args.slow_response_seconds,
                 upstream_timeout_seconds=args.upstream_timeout_seconds,
                 forward_before_failure=args.forward_before_failure,
+            )
+            return 0
+        if args.command == "dashboard":
+            serve_dashboard(
+                host=args.host,
+                port=args.port,
+                web_root=args.web_root,
+                config=args.config,
             )
             return 0
     except (ConfigError, ProviderError, ValueError) as exc:
@@ -144,6 +153,12 @@ def build_parser() -> argparse.ArgumentParser:
     proxy.add_argument("--slow-response-seconds", type=float, default=2.0)
     proxy.add_argument("--upstream-timeout-seconds", type=float, default=60.0)
     proxy.add_argument("--forward-before-failure", action="store_true")
+
+    dashboard = subparsers.add_parser("dashboard", help="serve the web console (web/) wired to the harness via /api/*")
+    dashboard.add_argument("--host", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=8765)
+    dashboard.add_argument("--web-root", type=Path, default=None, help="override the web/ directory served")
+    dashboard.add_argument("--config", type=Path, default=None, help="path to the template config (default: demo/rocm-doctor.yaml)")
     return parser
 
 
