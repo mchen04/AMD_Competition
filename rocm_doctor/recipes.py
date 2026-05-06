@@ -258,6 +258,24 @@ def registry() -> dict[str, RepairRecipe]:
                 build_changes=_rocm_flag_changes,
             ),
             RepairRecipe(
+                id="synthesize_patch",
+                supported_failure_classes=tuple(),
+                supported_profile_capabilities=(),
+                preconditions=(
+                    "diagnosis brain proposes a config_patch.changes map of dotted YAML paths; "
+                    "every path must already be in the union of allowlisted paths from the "
+                    "registry, every value must match the existing value's type, and no path "
+                    "may match the credential redaction filter.",
+                ),
+                config_path_templates=(),
+                risk_level="medium",
+                rollback_strategy="Restore the pre-patch values for every dotted YAML path the brain edited.",
+                verification_steps=(
+                    "rerun health check after the synthesized patch is applied",
+                ),
+                build_changes=lambda config: {},
+            ),
+            RepairRecipe(
                 id="restart_known_service",
                 supported_failure_classes=(
                     "endpoint_broken",
@@ -412,3 +430,18 @@ def _active_provider_value(config: dict[str, Any], suffix: str) -> Any:
 
 
 RECIPE_REGISTRY = registry()
+
+
+def global_allowlisted_paths(config: dict[str, Any]) -> set[str]:
+    """Union of every recipe's resolved dotted config paths for this active provider.
+
+    The synthesize_patch executor uses this set as the bounded action surface
+    available to the diagnosis brain when no single recipe applies.
+    """
+    paths: set[str] = set()
+    for recipe in RECIPE_REGISTRY.values():
+        if recipe.id == "synthesize_patch":
+            continue
+        for path in recipe.config_paths(config):
+            paths.add(path)
+    return paths

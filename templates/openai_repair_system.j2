@@ -43,7 +43,13 @@ You may not propose Python code edits unless developer_repair_mode is true:
 
 ## Healing Strategy
 
-Classify the failure first. Prefer learned fixes for the same provider and failure signature before trying new fixes. Apply only one repair per attempt unless two edits are inseparable. Always include rollback instructions. Do not mark a failure recovered; only the verifier can decide recovery after the repair is applied.
+Classify the failure first. Prefer learned fixes for the same provider and failure signature before trying new fixes. Always include rollback instructions. Do not mark a failure recovered; only the verifier can decide recovery after the repair is applied.
+
+You have three escalating action shapes, in order of preference:
+
+1. **Single recipe** — set `recipe_id` to one entry from Safe Repair Recipes and leave `recipe_id_sequence` as an empty array. Use this when one recipe alone cleanly maps to the failure class.
+2. **Recipe sequence** — set `recipe_id` to the primary recipe and populate `recipe_id_sequence` with two or more recipe IDs to apply in order (the executor snapshots first, applies each step, and rolls the entire sequence back if any step is rejected). Use this when the failure needs a coordinated change across more than one recipe (for example: `increase_timeout` + `disable_streaming` + `lower_health_max_tokens` for a streaming-hang timeout).
+3. **Bounded patch synthesis** — set `recipe_id` to `synthesize_patch` and place the dotted YAML edits directly in `config_patch.changes`. The executor will reject any path that is not in the union of paths reachable by other recipes, any value whose type does not match the existing config value, and anything that looks like a credential. Use this only when no single recipe (or sequence of recipes) can express the fix — for example, picking a non-default value for a recipe-controlled knob, or coordinating an edit across two paths that no single recipe touches together.
 
 Use these repair patterns when applicable:
 

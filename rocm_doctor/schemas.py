@@ -138,6 +138,7 @@ class RepairPlan:
     repairable: bool = True
     expected_success_signal: str = ""
     unrecoverable_reason: str = ""
+    recipe_id_sequence: list[str] = field(default_factory=list)
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any], provider: str = "unknown") -> "RepairPlan":
@@ -170,6 +171,9 @@ class RepairPlan:
             repairable=bool(value.get("repairable", True)),
             expected_success_signal=_string(value.get("expected_success_signal", ""), "expected_success_signal"),
             unrecoverable_reason=_string(value.get("unrecoverable_reason", ""), "unrecoverable_reason"),
+            recipe_id_sequence=_string_list(
+                value.get("recipe_id_sequence", []), "recipe_id_sequence"
+            ),
         )
 
 
@@ -187,6 +191,7 @@ class RepairResult:
     failure_class: str = ""
     verification_message: str = ""
     learned: bool = False
+    applied_recipe_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -306,6 +311,7 @@ REPAIR_PLAN_JSON_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         "recipe_id": {"type": "string"},
+        "recipe_id_sequence": {"type": "array", "items": {"type": "string"}},
         "failure_class": {"type": "string"},
         "repairable": {"type": "boolean"},
         "rationale": {"type": "string"},
@@ -334,6 +340,7 @@ REPAIR_PLAN_JSON_SCHEMA: dict[str, Any] = {
     },
     "required": [
         "recipe_id",
+        "recipe_id_sequence",
         "failure_class",
         "repairable",
         "rationale",

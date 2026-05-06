@@ -106,6 +106,7 @@ model_providers:
         - lower_max_model_len
         - set_tool_parser
         - set_rocm_device_flags
+        - synthesize_patch
     validation:
       max_health_response_chars: 160
       max_repeated_token_count: 8
