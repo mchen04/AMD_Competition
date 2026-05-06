@@ -1,8 +1,12 @@
 # ROCm Doctor
 
-Self-healing supervisor for self-hosted, OpenAI-compatible model endpoints (vLLM on AMD MI300X, Ollama, any chat-completions server). It runs `check → diagnose → heal → verify → report` in a bounded loop, applies only deterministic config repairs, and rolls back anything that doesn't recover the endpoint.
+**Model CI/CD for AMD MI300X.** Pin a known-good deployment, supervise it continuously, let an LLM agent decide intent, heal until pass.
 
-Diagnosis is pluggable (rules engine or any of three LLM brains). Repair execution is not — every fix maps to one of 18 audited recipes that can only edit allowlisted YAML paths.
+ROCm Doctor catches a model deployment at a known-good state, runs a CI/CD-style harness that probes everything continuously, and — when something breaks — has an LLM agent decide whether the breakage was *intentional* (record and wait) or *unintentional* (fix it, looping until the harness passes). It runs `check → diagnose → classify intent → heal → verify → report` continuously against any OpenAI-compatible endpoint (vLLM on AMD MI300X, Ollama, any chat-completions server).
+
+Diagnosis is pluggable (rules engine or any of three LLM brains). Repair execution is not — every fix maps to one of 20 audited recipes that can only edit allowlisted YAML paths. Intent is advisory: an LLM hiccup never blocks a heal — the rules engine produces a deterministic fallback.
+
+> **AMD Developer Hackathon · Track 1: AI Agents & Agentic Workflows.** End-to-end agentic system that runs on AMD compute (MI300X via vLLM) with a clear business value: turn a model deployment into a continuously-supervised, self-healing service that distinguishes operator changes from drift instead of overreacting to either.
 
 ## Quick Start
 
@@ -13,11 +17,24 @@ python3 -m venv /tmp/rocm-doctor-venv
 # Terminal 1: deterministic local endpoint
 /tmp/rocm-doctor-venv/bin/python -m rocm_doctor fake-endpoint --port 8000
 
-# Terminal 2: the loop
-/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check        --config demo/rocm-doctor.yaml
-/tmp/rocm-doctor-venv/bin/python -m rocm_doctor inject-failure wrong_endpoint_port --config demo/rocm-doctor.yaml
-/tmp/rocm-doctor-venv/bin/python -m rocm_doctor self-heal    --config demo/rocm-doctor.yaml
-/tmp/rocm-doctor-venv/bin/python -m rocm_doctor report       --config demo/rocm-doctor.yaml
+# Terminal 2: the CI/CD pipeline
+cp demo/rocm-doctor.yaml /tmp/rocm-doctor-demo.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check         --config /tmp/rocm-doctor-demo.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor pin-baseline  --config /tmp/rocm-doctor-demo.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor supervise     --config /tmp/rocm-doctor-demo.yaml --interval 10 --until-pass &
+
+# In another shell: break something the harness can fix.
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor inject-failure wrong_endpoint_port --config /tmp/rocm-doctor-demo.yaml
+# Watch the supervisor's stdout: it detects, classifies the diff as drift inside
+# the recipe allowlist (intent → unintentional), heals via update_endpoint_url,
+# and keeps polling.
+```
+
+For a one-shot run instead of a continuous supervisor, use `self-heal`:
+
+```bash
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor self-heal --config /tmp/rocm-doctor-demo.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor report    --config /tmp/rocm-doctor-demo.yaml
 ```
 
 Use a copy of the demo config when you want to mutate it repeatedly.
@@ -43,20 +60,24 @@ This runs `compileall`, `pytest`, the fake-endpoint demo loop on a copied config
 ## Architecture
 
 ```
-diagnosis brain  →  recipe_id  →  executor  →  verifier  →  learned-fixes
-(rules or LLM)     (audited list)  (allowlist+    (re-runs    (provider, signature)
-                                    rollback)      probes)     → recipe
+supervisor  →  monitor  →  diagnosis brain  →  intent classifier  →  recipe_id  →  executor  →  verifier  →  learned-fixes
+(continuous   (probes)    (rules or LLM)       (operator change?    (audited list)  (allowlist+    (re-runs    (provider, signature)
+ cadence)                                       record vs heal)                       rollback)      probes)     → recipe
+                                                       │
+                                                       └── pinned baseline diff feeds the decision
 ```
 
 - **`monitor.py`** — health probes against `/v1/models`, `/v1/chat/completions`, optional tool-call probe, context-length check. Emits an `EvidenceBundle`.
 - **`providers/`** — diagnosis brains. `rules` evaluates `providers/rules/rules.yaml`; LLM brains share `LLMDiagnosisProvider` in `providers/base.py` and call out via Jinja-rendered prompts under structured JSON-schema output.
-- **`failures.yaml`** — 13 failure classes mapped to ordered candidate recipes.
-- **`recipes/registry.yaml` + `recipes/builders.py`** — 18 deterministic recipes. YAML metadata + Python builder per id.
+- **`intent.py` + `templates/intent_classifier_system.j2`** — between diagnosis and planning, the brain (or rules fallback) decides whether the failure is an *operator change* (record only) or *drift* (heal). Diffs against the pinned baseline; falls back to last-known-good if no pin exists. See `docs/ci-cd-mode.md`.
+- **`supervisor.py`** — the CI/CD loop wrapped around `self_heal_config`. Cadence + cooldowns + an unbounded heal mode (`--until-pass`).
+- **`failures.yaml`** — 15 failure classes mapped to ordered candidate recipes.
+- **`recipes/registry.yaml` + `recipes/builders.py`** — 20 deterministic recipes. YAML metadata + Python builder per id.
 - **`healing_policy.py`** — orders candidates: learned fixes first, then provider-recommended, then taxonomy default. Filtered to the active profile's `safe_repair_recipes`.
 - **`executor.py`** — applies a recipe (or recipe sequence, or bounded patch synthesis), snapshots config, validates type/path/credential safety, rolls back on verification failure.
 - **`operations.py`** — orchestrates the full `self_heal_config` loop with `max_attempts`.
 - **`state.py`** — persists `learned_fixes` keyed by `(provider, failure_class, signature)` so repeat incidents try the known-good recipe first.
-- **`dashboard.py`** — `/api/snapshot`, `/api/check`, `/api/run` (SSE), `/api/reset`, `/api/active-provider`, `/api/configs/{select,import}`, `/api/incident/{id}`.
+- **`dashboard.py`** — `/api/snapshot`, `/api/check`, `/api/run` (SSE), `/api/reset`, `/api/active-provider`, `/api/configs/{select,import}`, `/api/incident/{id}`, `/api/baseline/{pin,unpin,restore,diff}`, `/api/supervise/start` + `/api/supervise/{run_id}/{events,stop}`.
 - **`adversarial_proxy.py`** — sits in front of a real backend and injects 16 transport/protocol failure modes for stress testing.
 
 ## What the LLM Brain Can and Cannot Do
@@ -69,13 +90,13 @@ The repair-system prompt (`templates/openai_repair_system.j2`) constrains the LL
 
 The LLM cannot run shell, edit Python, change credentials, or write files outside the workspace. Prompt-injection escalation is bounded by the executor, not by the prompt.
 
-## Recipes (18)
+## Recipes (20)
 
-`noop`, `retry_without_config_change`, `update_endpoint_url`, `increase_health_max_tokens`, `lower_health_max_tokens`, `increase_timeout`, `increase_retry_backoff`, `disable_streaming`, `switch_prompt_template`, `fallback_model_provider`, `restore_last_known_good_config`, `tighten_expected_health_response`, `disable_tool_probe_for_weak_model`, `lower_max_model_len`, `set_tool_parser`, `set_rocm_device_flags`, `synthesize_patch`, `restart_known_service` (dry-run only).
+`noop`, `retry_without_config_change`, `update_endpoint_url`, `increase_health_max_tokens`, `lower_health_max_tokens`, `increase_timeout`, `increase_retry_backoff`, `disable_streaming`, `switch_prompt_template`, `fallback_model_provider`, `restore_last_known_good_config`, `tighten_expected_health_response`, `disable_tool_probe_for_weak_model`, `lower_max_model_len`, `set_tool_parser`, `set_rocm_device_flags`, `lower_gpu_memory_utilization` *(MI300X)*, `align_max_tokens_with_served` *(MI300X)*, `synthesize_patch`, `restart_known_service` (dry-run only).
 
-## Failure Classes (13)
+## Failure Classes (15)
 
-`endpoint_broken`, `wrong_endpoint_port`, `one_time_rate_limit`, `repeated_rate_limit`, `timeout`, `empty_qwen_output`, `instruction_drift`, `repetitive_loop`, `broken_streaming`, `bad_template`, `permanent_500`, `invalid_config`, `config_invalid`. Plus harness-emitted `provider_output_invalid`, `provider_skipped`, `unknown_failure`, `tool_parser_mismatch`, `context_length_too_large`, `missing_rocm_device_flags` handled by `healing_policy.py` directly.
+`endpoint_broken`, `wrong_endpoint_port`, `one_time_rate_limit`, `repeated_rate_limit`, `timeout`, `empty_qwen_output`, `instruction_drift`, `repetitive_loop`, `broken_streaming`, `bad_template`, `permanent_500`, `rocm_oom_inference` *(MI300X)*, `max_model_len_mismatch` *(MI300X)*, `invalid_config`, `config_invalid`. Plus harness-emitted `provider_output_invalid`, `provider_skipped`, `unknown_failure`, `tool_parser_mismatch`, `context_length_too_large`, `missing_rocm_device_flags` handled by `healing_policy.py` directly.
 
 ## Configs
 

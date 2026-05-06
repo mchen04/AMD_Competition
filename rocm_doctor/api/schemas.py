@@ -207,6 +207,67 @@ class IncidentResponse(TypedDict):
     body: str
 
 
+class SuperviseStartRequest(TypedDict, total=False):
+    interval_seconds: float
+    until_pass: bool
+    provider_name: str | None
+
+
+class SuperviseStartResponse(TypedDict):
+    run_id: str
+    diagnosis_provider: str
+    interval_seconds: float
+    until_pass: bool
+
+
+class SuperviseStopResponse(TypedDict):
+    run_id: str
+    stopping: bool
+
+
+class SuperviseStatusResponse(TypedDict, total=False):
+    run_id: str
+    state: str
+    diagnosis_provider: str
+    error: str | None
+    summary: dict[str, Any] | None
+    started_at: float
+
+
+class BaselinePinResponse(TypedDict):
+    pinned: bool
+    config_path: str
+    paths: int
+
+
+class BaselineUnpinResponse(TypedDict):
+    unpinned: bool
+
+
+class BaselineRestoreResponse(TypedDict):
+    restored: bool
+    config_path: str
+
+
+class BaselineDiffEntry(TypedDict, total=False):
+    path: str
+    before: Any
+    after: Any
+
+
+class BaselineDiff(TypedDict):
+    changed: list[BaselineDiffEntry]
+    added: list[BaselineDiffEntry]
+    removed: list[BaselineDiffEntry]
+
+
+class BaselineDiffResponse(TypedDict, total=False):
+    baseline_kind: str
+    diff: BaselineDiff
+    pinned_at: str | None
+    pinned: bool
+
+
 class SSEEvent(TypedDict, total=False):
     event: str
     run_id: str
@@ -224,6 +285,10 @@ API_REQUEST_SCHEMAS: dict[str, type[TypedDict]] = {  # type: ignore[type-arg]
     "POST /api/active-provider": ActiveProviderRequest,
     "POST /api/configs/select": ConfigSelectRequest,
     "POST /api/configs/import": ConfigImportRequest,
+    "POST /api/supervise/start": SuperviseStartRequest,
+    "POST /api/baseline/pin": ResetRequest,
+    "POST /api/baseline/unpin": ResetRequest,
+    "POST /api/baseline/restore": ResetRequest,
 }
 
 
@@ -238,6 +303,13 @@ API_RESPONSE_SCHEMAS: dict[str, type[TypedDict]] = {  # type: ignore[type-arg]
     "POST /api/configs/select": ConfigSelectResponse,
     "POST /api/configs/import": ConfigImportResponse,
     "GET /api/incident/{id}": IncidentResponse,
+    "POST /api/supervise/start": SuperviseStartResponse,
+    "POST /api/supervise/{run_id}/stop": SuperviseStopResponse,
+    "GET /api/supervise/{run_id}": SuperviseStatusResponse,
+    "POST /api/baseline/pin": BaselinePinResponse,
+    "POST /api/baseline/unpin": BaselineUnpinResponse,
+    "POST /api/baseline/restore": BaselineRestoreResponse,
+    "GET /api/baseline/diff": BaselineDiffResponse,
 }
 
 
@@ -254,6 +326,14 @@ SSE_EVENTS: list[str] = [
     "report.written",
     "done",
     "error",
+    "supervisor.started",
+    "supervisor.stopped",
+    "cycle.started",
+    "cycle.healthy",
+    "cycle.skipped",
+    "cycle.unhealthy",
+    "cycle.completed",
+    "cycle.error",
 ]
 
 

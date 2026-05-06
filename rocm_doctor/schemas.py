@@ -21,6 +21,8 @@ FAILURE_CLASSES = {
     "context_length_too_large",
     "tool_parser_mismatch",
     "missing_rocm_device_flags",
+    "rocm_oom_inference",
+    "max_model_len_mismatch",
     "provider_output_invalid",
     "provider_skipped",
     "invalid_config",
@@ -213,6 +215,44 @@ class SelfHealResult:
     final_verification: VerificationResult | None = None
 
 
+INTENT_VALUES = ("intentional", "unintentional", "uncertain")
+INTENT_ACTIONS = ("heal", "record_only", "ask_human")
+
+
+@dataclass
+class IntentClassification:
+    intent: str
+    confidence: float
+    reasoning: str
+    recommend_action: str
+    baseline_kind: str = ""
+    diff_path_count: int = 0
+    provider: str = "rules"
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any], provider: str = "unknown") -> "IntentClassification":
+        required = ["intent", "confidence", "reasoning", "recommend_action"]
+        _require_keys(value, required, "IntentClassification")
+        intent = _string(value["intent"], "intent")
+        if intent not in INTENT_VALUES:
+            raise SchemaError(f"unknown intent: {intent}")
+        action = _string(value["recommend_action"], "recommend_action")
+        if action not in INTENT_ACTIONS:
+            raise SchemaError(f"unknown recommend_action: {action}")
+        confidence = float(value["confidence"])
+        if confidence < 0 or confidence > 1:
+            raise SchemaError("confidence must be between 0 and 1")
+        return cls(
+            intent=intent,
+            confidence=confidence,
+            reasoning=_string(value["reasoning"], "reasoning"),
+            recommend_action=action,
+            baseline_kind=_string(value.get("baseline_kind", ""), "baseline_kind"),
+            diff_path_count=int(value.get("diff_path_count", 0) or 0),
+            provider=_string(value.get("provider", provider), "provider"),
+        )
+
+
 @dataclass
 class IncidentReport:
     incident_id: str
@@ -301,6 +341,30 @@ DIAGNOSIS_JSON_SCHEMA: dict[str, Any] = {
         "suspected_cause",
         "missing_evidence",
         "recommended_recipe_ids",
+        "provider",
+    ],
+}
+
+
+INTENT_CLASSIFIER_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "intent": {"type": "string", "enum": list(INTENT_VALUES)},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "reasoning": {"type": "string"},
+        "recommend_action": {"type": "string", "enum": list(INTENT_ACTIONS)},
+        "baseline_kind": {"type": "string"},
+        "diff_path_count": {"type": "integer", "minimum": 0},
+        "provider": {"type": "string"},
+    },
+    "required": [
+        "intent",
+        "confidence",
+        "reasoning",
+        "recommend_action",
+        "baseline_kind",
+        "diff_path_count",
         "provider",
     ],
 }

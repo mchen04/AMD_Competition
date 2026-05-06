@@ -37,11 +37,14 @@ from .api.schemas import validate_request
 from .config import ConfigError, load_config, save_config
 from .failure_injection import SCENARIO_KINDS, SCENARIOS, inject_failure
 from .healing_policy import FAILURE_TAXONOMY
+from .intent import baseline_for_intent, diff_configs
 from .logging import get_logger
 from .operations import check_config, self_heal_config
 from .recipes import RECIPE_REGISTRY
 from .reporting import generate_report
 from .schemas import to_jsonable
+from .state import load_pinned_baseline, pin_baseline, restore_pinned_baseline, unpin_baseline
+from .supervisor import supervise_config
 from .timeutil import utc_now
 
 _log = get_logger(__name__)
@@ -263,6 +266,53 @@ class _RunRecord:
         }
 
 
+class _SupervisorRecord:
+    """Long-lived supervise loop run; reuses the SSE buffer/condvar pattern."""
+
+    BUFFER_LIMIT = 1024
+
+    def __init__(self, run_id: str, provider_name: str) -> None:
+        self.run_id = run_id
+        self.diagnosis_provider = provider_name
+        self.events: deque[dict[str, Any]] = deque(maxlen=self.BUFFER_LIMIT)
+        self.condition = threading.Condition()
+        self.done = False
+        self.error: str | None = None
+        self.summary: dict[str, Any] | None = None
+        self.started_at = time.time()
+        self.stop_event = threading.Event()
+        self._seq = 0
+
+    def emit(self, event: str, data: dict[str, Any] | None = None) -> None:
+        with self.condition:
+            self._seq += 1
+            self.events.append({
+                "event": event,
+                "run_id": self.run_id,
+                "seq": self._seq,
+                "ts": utc_now(),
+                "data": data or {},
+            })
+            self.condition.notify_all()
+
+    def finish(self, summary: dict[str, Any] | None, error: str | None = None) -> None:
+        with self.condition:
+            self.summary = summary
+            self.error = error
+            self.done = True
+            self.condition.notify_all()
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "state": "done" if self.done else "running",
+            "diagnosis_provider": self.diagnosis_provider,
+            "error": self.error,
+            "summary": self.summary,
+            "started_at": self.started_at,
+        }
+
+
 # ── Workspace state ──────────────────────────────────────────────────────
 
 class DashboardState:
@@ -284,6 +334,7 @@ class DashboardState:
         self.diagnosis_provider = diagnosis_provider
         self.run_durations: OrderedDict[str, int] = OrderedDict()
         self.runs: OrderedDict[str, _RunRecord] = OrderedDict()
+        self.supervisors: OrderedDict[str, _SupervisorRecord] = OrderedDict()
         self.reset()
 
     def rebind(self, template_config: Path) -> None:
@@ -316,6 +367,16 @@ class DashboardState:
         self.runs[run.run_id] = run
         while len(self.runs) > self.RUN_HISTORY:
             self.runs.popitem(last=False)
+
+    def register_supervisor(self, run: _SupervisorRecord) -> None:
+        self.supervisors[run.run_id] = run
+        # Stop+evict the oldest finished records so a long-running session
+        # doesn't accumulate dead loops.
+        for run_id, record in list(self.supervisors.items()):
+            if len(self.supervisors) <= self.RUN_HISTORY:
+                break
+            if record.done:
+                self.supervisors.pop(run_id, None)
 
     def reset(self) -> None:
         shutil.copy2(self.template_config, self.working_config)
@@ -500,6 +561,112 @@ def _api_reset(state: DashboardState, _body: dict, _query: dict, _route: dict) -
     return {"reset": True, "config_path": str(state.working_config)}
 
 
+# ── Supervisor endpoints ────────────────────────────────────────────────
+
+
+def _api_supervise_start(state: DashboardState, body: dict, _query: dict, _route: dict) -> dict:
+    cfg = load_config(state.working_config)
+    block = cfg.get("supervision") or {}
+    interval = body.get("interval_seconds")
+    if interval is None:
+        interval = block.get("interval_seconds", 30)
+    until_pass = body.get("until_pass")
+    if until_pass is None:
+        until_pass = block.get("until_pass", False)
+    requested_provider = body.get("provider_name")
+    provider_name = (
+        (requested_provider or state.diagnosis_provider or "rules").strip() or "rules"
+    )
+
+    run_id = uuid.uuid4().hex[:12]
+    record = _SupervisorRecord(run_id, provider_name)
+    state.register_supervisor(record)
+
+    def _emit(name: str, data: dict[str, Any]) -> None:
+        record.emit(name, data)
+
+    def _runner() -> None:
+        try:
+            summary = supervise_config(
+                state.working_config,
+                provider_name=provider_name,
+                interval_seconds=float(interval),
+                until_pass=bool(until_pass),
+                on_event=_emit,
+                stop_event=record.stop_event,
+            )
+            record.finish(summary)
+        except Exception as exc:  # noqa: BLE001
+            record.emit("error", {"error": str(exc), "type": type(exc).__name__})
+            record.finish(None, error=str(exc))
+
+    thread = threading.Thread(
+        target=_runner,
+        name=f"rocm-doctor-supervise-{run_id}",
+        daemon=True,
+    )
+    thread.start()
+
+    return {
+        "run_id": run_id,
+        "diagnosis_provider": provider_name,
+        "interval_seconds": float(interval),
+        "until_pass": bool(until_pass),
+    }
+
+
+def _api_supervise_stop(state: DashboardState, _body: dict, _query: dict, route_args: dict) -> dict:
+    run_id = route_args.get("run_id", "")
+    record = state.supervisors.get(run_id)
+    if record is None:
+        raise FileNotFoundError(f"unknown supervisor run: {run_id}")
+    record.stop_event.set()
+    return {"run_id": run_id, "stopping": True}
+
+
+def _api_supervise_status(state: DashboardState, _body: dict, _query: dict, route_args: dict) -> dict:
+    run_id = route_args.get("run_id", "")
+    record = state.supervisors.get(run_id)
+    if record is None:
+        raise FileNotFoundError(f"unknown supervisor run: {run_id}")
+    return record.snapshot()
+
+
+# ── Baseline endpoints ──────────────────────────────────────────────────
+
+
+def _api_baseline_pin(state: DashboardState, _body: dict, _query: dict, _route: dict) -> dict:
+    snapshot = pin_baseline(state.working_config)
+    return {"pinned": True, "config_path": str(state.working_config), "paths": len(snapshot)}
+
+
+def _api_baseline_unpin(state: DashboardState, _body: dict, _query: dict, _route: dict) -> dict:
+    removed = unpin_baseline(state.working_config)
+    return {"unpinned": removed}
+
+
+def _api_baseline_restore(state: DashboardState, _body: dict, _query: dict, _route: dict) -> dict:
+    restored = restore_pinned_baseline(state.working_config)
+    if restored is None:
+        raise ValueError("no pinned baseline available")
+    return {"restored": True, "config_path": str(state.working_config)}
+
+
+def _api_baseline_diff(state: DashboardState, _body: dict, _query: dict, _route: dict) -> dict:
+    cfg = load_config(state.working_config)
+    baseline, kind = baseline_for_intent(state.working_config)
+    diff = diff_configs(cfg, baseline) if baseline else {"changed": [], "added": [], "removed": []}
+    pinned = baseline if kind == "pinned" else load_pinned_baseline(state.working_config)
+    return {
+        "baseline_kind": kind,
+        "diff": diff,
+        "pinned_at": (state.state_path.is_file() and (
+            json.loads(state.state_path.read_text(encoding="utf-8")).get("pinned_baseline_at") or None
+        )) or None,
+        "pinned": pinned is not None,
+    }
+
+
 # ── Config discovery / switching / import ───────────────────────────────
 
 
@@ -682,6 +849,13 @@ ROUTES: list[tuple[str, str, HandlerFn, str | None]] = [
     ("POST", "/api/configs/select", _api_configs_select, "POST /api/configs/select"),
     ("POST", "/api/configs/import", _api_configs_import, "POST /api/configs/import"),
     ("GET", "/api/incident/{id}", _api_incident, None),
+    ("POST", "/api/supervise/start", _api_supervise_start, "POST /api/supervise/start"),
+    ("POST", "/api/supervise/{run_id}/stop", _api_supervise_stop, None),
+    ("GET", "/api/supervise/{run_id}", _api_supervise_status, None),
+    ("POST", "/api/baseline/pin", _api_baseline_pin, "POST /api/baseline/pin"),
+    ("POST", "/api/baseline/unpin", _api_baseline_unpin, "POST /api/baseline/unpin"),
+    ("POST", "/api/baseline/restore", _api_baseline_restore, "POST /api/baseline/restore"),
+    ("GET", "/api/baseline/diff", _api_baseline_diff, None),
 ]
 
 
@@ -736,6 +910,9 @@ class _DashboardHandler(SimpleHTTPRequestHandler):
         if parsed.path.startswith("/api/run/") and parsed.path.endswith("/events"):
             run_id = parsed.path[len("/api/run/"): -len("/events")]
             return self._stream_events(run_id)
+        if parsed.path.startswith("/api/supervise/") and parsed.path.endswith("/events"):
+            run_id = parsed.path[len("/api/supervise/"): -len("/events")]
+            return self._stream_supervise_events(run_id)
         if parsed.path.startswith("/api/"):
             return self._handle_api(parsed.path, parsed.query, "GET", b"")
         super().do_GET()
@@ -796,6 +973,21 @@ class _DashboardHandler(SimpleHTTPRequestHandler):
         record = self.state.runs.get(run_id)
         if record is None:
             self._json(404, {"error": f"unknown run: {run_id}"})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+        try:
+            self._drain_to_client(record)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _stream_supervise_events(self, run_id: str) -> None:
+        record = self.state.supervisors.get(run_id)
+        if record is None:
+            self._json(404, {"error": f"unknown supervisor run: {run_id}"})
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")

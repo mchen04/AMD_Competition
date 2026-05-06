@@ -8,9 +8,11 @@ from typing import Any, Mapping, Protocol
 from ..config import get_active_profile
 from ..schemas import (
     DIAGNOSIS_JSON_SCHEMA,
+    INTENT_CLASSIFIER_JSON_SCHEMA,
     REPAIR_PLAN_JSON_SCHEMA,
     DiagnosisResult,
     EvidenceBundle,
+    IntentClassification,
     RepairPlan,
     RetryPolicy,
     to_jsonable,
@@ -36,6 +38,16 @@ class Provider(Protocol):
     def plan(
         self, diagnosis: DiagnosisResult, evidence: EvidenceBundle, config: dict[str, Any]
     ) -> RepairPlan | Mapping[str, Any]: ...
+
+    def classify_intent(
+        self,
+        diagnosis: DiagnosisResult,
+        evidence: EvidenceBundle,
+        config: dict[str, Any],
+        baseline_diff: dict[str, Any],
+        activity_log: list[dict[str, Any]],
+        baseline_kind: str,
+    ) -> IntentClassification | Mapping[str, Any]: ...
 
 
 class LLMDiagnosisProvider(ABC):
@@ -113,6 +125,40 @@ class LLMDiagnosisProvider(ABC):
         )
         payload["provider"] = self.name
         return RepairPlan.from_mapping(payload, provider=self.name)
+
+    def classify_intent(
+        self,
+        diagnosis: DiagnosisResult,
+        evidence: EvidenceBundle,
+        config: dict[str, Any],
+        baseline_diff: dict[str, Any],
+        activity_log: list[dict[str, Any]],
+        baseline_kind: str,
+    ) -> IntentClassification:
+        template_ref = (
+            self.spec.get("templates", {}).get("intent_classifier")
+            or "../templates/intent_classifier_system.j2"
+        )
+        payload = self._invoke(
+            evidence,
+            "rocm_doctor_intent",
+            INTENT_CLASSIFIER_JSON_SCHEMA,
+            template_ref,
+            {
+                "diagnosis": to_jsonable(diagnosis),
+                "evidence": to_jsonable(evidence),
+                "baseline_diff": to_jsonable(baseline_diff),
+                "baseline_kind": baseline_kind,
+                "activity_log": to_jsonable(activity_log),
+            },
+        )
+        payload.setdefault("provider", self.name)
+        payload.setdefault("baseline_kind", baseline_kind)
+        payload.setdefault(
+            "diff_path_count",
+            int(len((baseline_diff or {}).get("changed", []) or [])),
+        )
+        return IntentClassification.from_mapping(payload, provider=self.name)
 
     def _invoke(
         self,

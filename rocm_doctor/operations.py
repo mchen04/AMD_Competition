@@ -6,9 +6,17 @@ from pathlib import Path
 from .config import ConfigError, load_config, redact_config, save_config
 from .executor import execute_plan
 from .healing_policy import applied_values, candidate_recipe_ids, failure_signature, repair_plan_for_recipe
+from .intent import classify_and_record
 from .monitor import run_check
 from .providers import ProviderError, diagnose_with_provider, plan_with_provider
-from .schemas import DiagnosisResult, RepairResult, SelfHealResult, VerificationResult, provider_output_invalid
+from .schemas import (
+    DiagnosisResult,
+    IntentClassification,
+    RepairResult,
+    SelfHealResult,
+    VerificationResult,
+    provider_output_invalid,
+)
 from .state import (
     load_state,
     record_last_known_good_config,
@@ -93,12 +101,20 @@ def verify_config(config_path: str | Path) -> VerificationResult:
     return result
 
 
-def self_heal_config(config_path: str | Path, provider_name: str = "rules") -> SelfHealResult:
+def self_heal_config(
+    config_path: str | Path,
+    provider_name: str = "rules",
+    *,
+    max_attempts_override: int | None = None,
+) -> SelfHealResult:
     try:
         config = load_config(config_path)
     except ConfigError as exc:
         return _restore_invalid_config(config_path, str(exc))
-    max_attempts = int(config.get("self_healing", {}).get("max_attempts", 3))
+    if max_attempts_override is not None:
+        max_attempts = int(max_attempts_override)
+    else:
+        max_attempts = int(config.get("self_healing", {}).get("max_attempts", 3))
     repairs: list[RepairResult] = []
     last_verification: VerificationResult | None = None
     last_reason = ""
@@ -138,6 +154,23 @@ def self_heal_config(config_path: str | Path, provider_name: str = "rules") -> S
                 attempts=attempt,
                 unrecoverable=True,
                 reason=diagnosis.suspected_cause + " " + " ".join(diagnosis.evidence),
+                repairs=repairs,
+            )
+            record_stage(config_path, "self_heal", result)
+            return result
+
+        intent = classify_and_record(config_path, diagnosis, evidence, config, provider_name)
+        if intent.recommend_action != "heal":
+            last_reason = (
+                f"intent classifier marked {diagnosis.failure_class} as {intent.intent} "
+                f"({intent.recommend_action}); skipping heal"
+            )
+            result = SelfHealResult(
+                healthy=False,
+                recovered=False,
+                attempts=attempt,
+                unrecoverable=intent.recommend_action != "heal",
+                reason=last_reason,
                 repairs=repairs,
             )
             record_stage(config_path, "self_heal", result)

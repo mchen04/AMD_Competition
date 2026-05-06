@@ -72,6 +72,41 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
         if self.server.failure_mode == "chat_500":
             self._send_json(500, {"error": {"message": "chat endpoint failed"}})
             return
+        if self.server.failure_mode in {"hip_oom", "hip_oom_once"}:
+            if self.server.failure_mode == "hip_oom_once" and not self.server._consume_once("chat_hip_oom"):
+                pass  # already consumed → fall through to healthy below
+            else:
+                self._send_json(
+                    500,
+                    {
+                        "error": {
+                            "type": "RuntimeError",
+                            "message": (
+                                "RuntimeError: HIP error: hipErrorOutOfMemory: "
+                                "ROCm out of memory while allocating KV cache on MI300X"
+                            ),
+                        }
+                    },
+                )
+                return
+        if self.server.failure_mode in {"max_model_len_exceeded", "max_model_len_exceeded_once"}:
+            if self.server.failure_mode == "max_model_len_exceeded_once" and not self.server._consume_once("chat_max_model_len"):
+                pass
+            else:
+                self._send_json(
+                    400,
+                    {
+                        "error": {
+                            "type": "BadRequestError",
+                            "message": (
+                                "This model's maximum context length is "
+                                "8192 tokens. However, you requested context length of "
+                                "16384 tokens which is greater than the maximum max_model_len."
+                            ),
+                        }
+                    },
+                )
+                return
         if self.server.failure_mode == "rate_limit":
             self._send_json(429, {"error": {"message": "rate limited"}})
             return

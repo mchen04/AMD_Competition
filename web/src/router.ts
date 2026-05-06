@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 export type Route =
   | "overview"
-  | "loop"
+  | "pipeline"
   | "providers"
   | "recipes"
   | "failures"
@@ -11,7 +11,7 @@ export type Route =
 
 export const ROUTES: Route[] = [
   "overview",
-  "loop",
+  "pipeline",
   "providers",
   "recipes",
   "failures",
@@ -19,9 +19,15 @@ export const ROUTES: Route[] = [
   "config",
 ];
 
+const LEGACY_ROUTES: Record<string, Route> = {
+  loop: "pipeline",
+};
+
 function readHash(): Route {
   const fromHash = window.location.hash.replace("#", "");
-  return (ROUTES as string[]).includes(fromHash) ? (fromHash as Route) : "overview";
+  if ((ROUTES as string[]).includes(fromHash)) return fromHash as Route;
+  if (fromHash in LEGACY_ROUTES) return LEGACY_ROUTES[fromHash];
+  return "overview";
 }
 
 export function useRoute(): [Route, (r: Route) => void] {

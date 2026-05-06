@@ -52,6 +52,55 @@ def record_stage(config_path: str | Path, key: str, value: Any) -> None:
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def pin_baseline(config_path: str | Path) -> dict[str, Any]:
+    """Pin the current YAML as the operator-blessed baseline.
+
+    Distinct from ``last_known_good_config`` — that one auto-updates on every
+    healthy probe. The pinned baseline only changes when the operator says so,
+    and the intent classifier diffs against it to decide if a break is
+    deliberate.
+    """
+    config = load_config(config_path)
+    snapshot = to_jsonable(deepcopy(config))
+    _mutate_state(
+        config_path,
+        {
+            "pinned_baseline_config": snapshot,
+            "pinned_baseline_config_redacted": redact_config(config),
+            "pinned_baseline_at": utc_now(),
+        },
+    )
+    return snapshot
+
+
+def unpin_baseline(config_path: str | Path) -> bool:
+    state = load_state(config_path)
+    removed = False
+    for key in ("pinned_baseline_config", "pinned_baseline_config_redacted", "pinned_baseline_at"):
+        if key in state:
+            del state[key]
+            removed = True
+    if removed:
+        _write_state(config_path, state)
+    return removed
+
+
+def load_pinned_baseline(config_path: str | Path) -> dict[str, Any] | None:
+    state = load_state(config_path)
+    snapshot = state.get("pinned_baseline_config")
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def restore_pinned_baseline(config_path: str | Path) -> dict[str, Any] | None:
+    snapshot = load_pinned_baseline(config_path)
+    if not isinstance(snapshot, dict):
+        return None
+    Path(config_path).write_text(
+        yaml.safe_dump(snapshot, sort_keys=False, allow_unicode=False), encoding="utf-8"
+    )
+    return snapshot
+
+
 def record_last_known_good_config(config_path: str | Path, config: dict[str, Any]) -> None:
     _mutate_state(
         config_path,

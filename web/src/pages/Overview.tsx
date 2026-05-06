@@ -4,13 +4,15 @@ import { Stat } from "../components/common/Stat";
 import { StatusPill } from "../components/common/Pill";
 import { Icon } from "../components/common/Icon";
 import { ListRow } from "../components/common/ListRow";
+import { BaselineStrip } from "../components/overview/BaselineStrip";
+import { SupervisorPanel } from "../components/overview/SupervisorPanel";
 
 interface OverviewPageProps {
-  onOpenLoop: () => void;
+  onOpenPipeline: () => void;
 }
 
-export function OverviewPage({ onOpenLoop }: OverviewPageProps) {
-  const { snapshot, activeProviderId } = useApp();
+export function OverviewPage({ onOpenPipeline }: OverviewPageProps) {
+  const { snapshot, activeProviderId, refresh, refreshKey, diagnosisProvider } = useApp();
   if (!snapshot) return null;
 
   const provider = snapshot.providers.find((p) => p.id === activeProviderId) ?? snapshot.providers[0];
@@ -31,12 +33,14 @@ export function OverviewPage({ onOpenLoop }: OverviewPageProps) {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Overview</h1>
-          <p className="page-sub">Self-healing harness for OpenAI-compatible model runtimes.</p>
+          <h1 className="page-title">Model CI/CD on AMD</h1>
+          <p className="page-sub">
+            Pin a known-good deployment, supervise it continuously, let an LLM agent decide intent, heal until pass.
+          </p>
         </div>
         <div className="page-actions">
-          <button className="btn primary" onClick={onOpenLoop}>
-            <Icon name="activity" size={12} /> open loop
+          <button className="btn primary" onClick={onOpenPipeline}>
+            <Icon name="activity" size={12} /> open pipeline
           </button>
         </div>
       </div>
@@ -69,6 +73,11 @@ export function OverviewPage({ onOpenLoop }: OverviewPageProps) {
           foot={durations.length > 0 ? `across ${durations.length} incidents` : "no timing data"}
         />
         <Stat label="Learned fixes" value={`${learnedFixes}`} foot="cached in state.json" />
+      </div>
+
+      <div className="grid cols-2" style={{ flexShrink: 0, gap: 12, marginTop: 8 }}>
+        <BaselineStrip refreshKey={refreshKey} onChange={() => void refresh()} />
+        <SupervisorPanel defaultProvider={diagnosisProvider} onCycle={() => void refresh()} />
       </div>
 
       <div className="page-body">

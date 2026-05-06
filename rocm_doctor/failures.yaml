@@ -56,3 +56,11 @@ failures:
   - failure_class: config_invalid
     description: "config cannot be loaded or validated"
     candidate_recipe_ids: [restore_last_known_good_config]
+
+  - failure_class: rocm_oom_inference
+    description: "ROCm/HIP out-of-memory at inference time on the active vLLM provider"
+    candidate_recipe_ids: [lower_gpu_memory_utilization, fallback_model_provider]
+
+  - failure_class: max_model_len_mismatch
+    description: "configured model.context.max_tokens exceeds the served vLLM max_model_len"
+    candidate_recipe_ids: [align_max_tokens_with_served, lower_max_model_len]

@@ -17,8 +17,8 @@ from typing import Any
 import yaml
 
 from ...config import get_active_profile
-from ...recipes import RECIPE_REGISTRY
-from ...schemas import DiagnosisResult, EvidenceBundle, RuntimeProfile
+from ...recipes import RECIPE_REGISTRY, global_allowlisted_paths
+from ...schemas import DiagnosisResult, EvidenceBundle, IntentClassification, RuntimeProfile
 
 
 _RULES_PATH = Path(__file__).resolve().parent / "rules.yaml"
@@ -40,6 +40,68 @@ class RulesProvider:
 
     def diagnose(self, evidence: EvidenceBundle, config: dict[str, Any]) -> DiagnosisResult:
         return evaluate_rules(evidence, config, self.name)
+
+    def classify_intent(
+        self,
+        diagnosis: DiagnosisResult,
+        evidence: EvidenceBundle,
+        config: dict[str, Any],
+        baseline_diff: dict[str, Any],
+        activity_log: list[dict[str, Any]],
+        baseline_kind: str,
+    ) -> IntentClassification:
+        # Deterministic fallback per the plan: when the only changes vs the
+        # baseline are paths a recipe knows how to fix, the change *is* the
+        # known drift — heal it. When the diff strays outside that allowlist,
+        # something the operator changed by hand is involved — record only.
+        changed = list((baseline_diff or {}).get("changed", []) or [])
+        added = list((baseline_diff or {}).get("added", []) or [])
+        removed = list((baseline_diff or {}).get("removed", []) or [])
+        diff_paths = {entry.get("path", "") for entry in changed + added + removed if isinstance(entry, dict)}
+        diff_paths.discard("")
+        path_count = len(diff_paths)
+
+        if path_count == 0:
+            return IntentClassification(
+                intent="unintentional",
+                confidence=0.85,
+                reasoning="No diff between current config and baseline; failure is external drift.",
+                recommend_action="heal",
+                baseline_kind=baseline_kind,
+                diff_path_count=0,
+                provider=self.name,
+            )
+
+        allowlist = _allowlist_prefixes(config)
+        in_allowlist = {path for path in diff_paths if _path_in_allowlist(path, allowlist)}
+        outside = diff_paths - in_allowlist
+
+        if outside:
+            return IntentClassification(
+                intent="intentional",
+                confidence=0.7,
+                reasoning=(
+                    f"Diff touches paths outside the recipe allowlist ({sorted(outside)}); "
+                    "looks like a deliberate operator change — record without auto-heal."
+                ),
+                recommend_action="record_only",
+                baseline_kind=baseline_kind,
+                diff_path_count=path_count,
+                provider=self.name,
+            )
+
+        return IntentClassification(
+            intent="unintentional",
+            confidence=0.7,
+            reasoning=(
+                f"Diff lives entirely inside the deterministic-repair allowlist "
+                f"({sorted(in_allowlist)}); treat as drift and heal."
+            ),
+            recommend_action="heal",
+            baseline_kind=baseline_kind,
+            diff_path_count=path_count,
+            provider=self.name,
+        )
 
     def plan(
         self, diagnosis: DiagnosisResult, evidence: EvidenceBundle, config: dict[str, Any]
@@ -124,8 +186,37 @@ def _matches(when: dict[str, Any], checks: dict[str, bool], endpoint: dict[str, 
             needles = [str(n) for n in when["error_contains_any"]]
             if not any(n in err for n in needles):
                 return False
+        if "body_contains_any" in when:
+            haystack = _probe_body_text(probe).casefold()
+            needles = [str(n).casefold() for n in when["body_contains_any"]]
+            if not any(n in haystack for n in needles):
+                return False
 
     return True
+
+
+def _probe_body_text(probe: dict[str, Any]) -> str:
+    """Return a searchable string view of the probe payload + raw body.
+
+    Lets ``body_contains_any`` rules match server-side error fragments that
+    don't surface in the harness-side ``probe.error`` (which is just
+    ``HTTP 500``). Stays bounded to keep matching cheap.
+    """
+    parts: list[str] = []
+    for field in ("response", "payload", "raw"):
+        value = probe.get(field)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            parts.append(value)
+            continue
+        try:
+            import json
+
+            parts.append(json.dumps(value, default=str))
+        except (TypeError, ValueError):
+            parts.append(str(value))
+    return " ".join(parts)[:2048]
 
 
 def _emit(emit: dict[str, Any], endpoint: dict[str, Any], profile: RuntimeProfile, provider_name: str) -> DiagnosisResult:
@@ -230,3 +321,27 @@ def _looks_like_timeout(error: str) -> bool:
 def _looks_like_template_error(error: str) -> bool:
     lowered = error.casefold()
     return "template render failed" in lowered or "template does not exist" in lowered
+
+
+def _allowlist_prefixes(config: dict[str, Any]) -> set[str]:
+    """Allowlist for the rules-fallback intent classifier.
+
+    Includes every recipe's resolved dotted paths plus a few cousin keys we
+    know are operator-tunable equivalents (``request.timeout`` is in the
+    allowlist via ``increase_timeout``; ``self_healing.max_attempts`` is the
+    sibling we expect to flex with it).
+    """
+    paths = set(global_allowlisted_paths(config))
+    paths.update(
+        {
+            "self_healing.max_attempts",
+            "self_healing.fallback_model_provider",
+        }
+    )
+    return paths
+
+
+def _path_in_allowlist(path: str, allowlist: set[str]) -> bool:
+    if path in allowlist:
+        return True
+    return any(path.startswith(prefix + ".") for prefix in allowlist)

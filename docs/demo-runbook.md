@@ -63,39 +63,82 @@ ROCM_DOCTOR_RUN_REAL_QWEN=1 \
 
 Adversarial proxy in front of local Ollama. Healthy traffic forwards to `qwen3:0.6b`; transport/protocol failures inject at the proxy boundary; prompt-level probes are answered by Qwen.
 
-## AMD Demo (after MI300X is up)
+## AMD Demo (captured via `scripts/amd_demo.sh`)
 
-Prereqs: GPU droplet created, `rocminfo`/`amd-smi` working, vLLM serving on `:8000`. See [amd-developer-cloud-setup.md](amd-developer-cloud-setup.md).
+The bundled demo script runs the canonical pin → supervise → inject → heal → restore → report sequence and drops the artifacts into `evidence/` plus a tarball.
 
 ```bash
-cp demo/amd-vllm-template.yaml /tmp/rocm-doctor-amd.yaml
-# Edit model.id + endpoint.base_url to match /v1/models output
+# No GPU required — runs against the bundled fake endpoint.
+bash scripts/amd_demo.sh --local
 
-/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check --config /tmp/rocm-doctor-amd.yaml
+# On a real MI300X droplet (rocminfo + amd-smi + vLLM on :8000):
+bash scripts/amd_demo.sh --droplet
 ```
 
-Run the same scenarios from the table above against the real endpoint. Expected mappings (validated locally):
+Both modes produce the same `evidence/0*.json|md|log` shape so the demo
+narrative is identical regardless of where it ran. `--droplet` additionally
+captures `evidence/rocminfo-pre.txt`, `evidence/amd-smi-pre.txt`,
+`evidence/amd-smi-post.txt`. See [amd-developer-cloud-setup.md](amd-developer-cloud-setup.md).
+
+Expected recipe mappings (covered by automated tests):
 
 - `wrong_endpoint_port` → `update_endpoint_url`
 - `context_length_too_large` → `lower_max_model_len`
 - `missing_rocm_device_flags` → `set_rocm_device_flags`
+- `rocm_oom_inference` → `lower_gpu_memory_utilization`
+- `max_model_len_mismatch` → `align_max_tokens_with_served`
 - `tool_parser_mismatch` → `set_tool_parser` (only if vLLM/model supports tool calls)
+
+The screen recording stays manual: run `rocm_doctor dashboard --port 8765`
+and drive the same scenarios via the UI. The script handles all shell-side
+artifact capture so the video can focus on the dashboard.
 
 ## Continuous Supervisor
 
 ```bash
-while true; do
-  if /tmp/rocm-doctor-venv/bin/python -m rocm_doctor check --config /tmp/rocm-doctor-amd.yaml >/tmp/last-check.json; then
-    date -u +"%Y-%m-%dT%H:%M:%SZ healthy"
-  else
-    /tmp/rocm-doctor-venv/bin/python -m rocm_doctor self-heal --provider rules --config /tmp/rocm-doctor-amd.yaml
-    /tmp/rocm-doctor-venv/bin/python -m rocm_doctor report --config /tmp/rocm-doctor-amd.yaml
-  fi
-  sleep 30
-done
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor supervise \
+  --config /tmp/rocm-doctor-amd.yaml \
+  --interval 30 \
+  --until-pass
 ```
 
-`self-heal` is one bounded recovery cycle by design. A production daemon should call the same bounded cycle repeatedly with a cooldown.
+The supervisor runs `check → diagnose → classify intent → heal → verify` on the configured interval, forever. `--until-pass` raises the per-cycle `max_attempts` to effectively unbounded so a stubborn drift gets every safe recipe before giving up. Cooldowns after a heal (`60s`) and after an intent skip (`300s`) keep the loop from thrashing — both tunable via the `supervision:` block in YAML. Stop with Ctrl-C.
+
+For the dashboard equivalent, the Overview page exposes a Supervisor panel with the same interval / until-pass controls and a live SSE event log.
+
+## Pin & Drift Demo
+
+This is the canonical Track-1 storyline: pin a healthy state, watch the harness ignore an *intentional* operator change, then watch it heal an *unintentional* drift.
+
+```bash
+cp demo/rocm-doctor.yaml /tmp/rocm-doctor-demo.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor fake-endpoint --port 8000 &
+
+# Pin the current healthy state.
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check         --config /tmp/rocm-doctor-demo.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor pin-baseline  --config /tmp/rocm-doctor-demo.yaml
+
+# Start the supervisor.
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor supervise \
+  --config /tmp/rocm-doctor-demo.yaml --interval 5 --until-pass &
+
+# 1) INTENTIONAL — edit a path the recipe set does NOT touch.
+python3 -c "import yaml; \
+  d=yaml.safe_load(open('/tmp/rocm-doctor-demo.yaml')); \
+  d['hardware']['deployment_target']='cluster-mi300x-ord1'; \
+  open('/tmp/rocm-doctor-demo.yaml','w').write(yaml.safe_dump(d, sort_keys=False))"
+# Next cycle: intent → intentional → record_only. Heal is skipped.
+
+# 2) UNINTENTIONAL — inject a known drift the recipe set fixes.
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor inject-failure wrong_endpoint_port \
+  --config /tmp/rocm-doctor-demo.yaml
+# Next cycle: intent → unintentional → heal. update_endpoint_url runs, verify passes.
+
+# Inspect the latest classification.
+jq '.intent' < /tmp/.rocm-doctor-state.json
+```
+
+The supervisor records each intent under the `intent` key in `state.json` and surfaces it on the Incidents page in the dashboard.
 
 ## Evidence to Save
 

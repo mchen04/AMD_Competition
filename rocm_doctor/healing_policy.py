@@ -60,6 +60,10 @@ def candidate_recipe_ids(
         ordered.append("lower_max_model_len")
     if diagnosis.failure_class == "missing_rocm_device_flags":
         ordered.append("set_rocm_device_flags")
+    if diagnosis.failure_class == "rocm_oom_inference":
+        ordered.extend(["lower_gpu_memory_utilization", "fallback_model_provider"])
+    if diagnosis.failure_class == "max_model_len_mismatch":
+        ordered.extend(["align_max_tokens_with_served", "lower_max_model_len"])
     if diagnosis.failure_class in {"endpoint_unreachable", "unknown_failure"}:
         ordered.extend(["fallback_model_provider", "restart_known_service", "noop"])
 

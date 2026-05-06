@@ -13,7 +13,7 @@ interface TopbarProps {
 
 const ROUTE_LABEL: Record<Route, string> = {
   overview: "Overview",
-  loop: "Healing Loop",
+  pipeline: "Pipeline",
   providers: "Providers",
   recipes: "Recipes",
   failures: "Failures",
@@ -61,7 +61,7 @@ export function Topbar({ route, onCheck, onHeal, onReset }: TopbarProps) {
         <Icon name="refresh" size={12} /> check
       </button>
       <button className="topbar-btn primary" onClick={onHeal}>
-        <Icon name="bolt" size={12} /> heal
+        <Icon name="bolt" size={12} /> run pipeline
       </button>
       <button className="topbar-btn" onClick={onReset} title="restore working config from template">
         <Icon name="x" size={12} /> reset

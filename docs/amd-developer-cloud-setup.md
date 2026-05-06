@@ -85,7 +85,16 @@ Edit `/tmp/rocm-doctor-amd.yaml`:
 
 ## Run the Demo
 
-See [demo-runbook.md](demo-runbook.md) for the full scenario list. Minimum proof:
+The fastest path is the bundled `scripts/amd_demo.sh --droplet`, which auto-fills the
+template by parsing `/v1/models`, captures `rocminfo`/`amd-smi` snapshots, runs the
+canonical pin → supervise → inject → heal → restore → report sequence, and tars the
+result into `evidence-<timestamp>.tar.gz` for `scp` back to the workstation:
+
+```bash
+ROCM_DOCTOR_AMD_BASE_URL=http://127.0.0.1:8000/v1 bash scripts/amd_demo.sh --droplet
+```
+
+For ad-hoc runs, the manual sequence still works:
 
 ```bash
 /tmp/rocm-doctor-venv/bin/python -m rocm_doctor check        --config /tmp/rocm-doctor-amd.yaml
@@ -94,6 +103,43 @@ See [demo-runbook.md](demo-runbook.md) for the full scenario list. Minimum proof
 /tmp/rocm-doctor-venv/bin/python -m rocm_doctor verify       --config /tmp/rocm-doctor-amd.yaml
 /tmp/rocm-doctor-venv/bin/python -m rocm_doctor report       --config /tmp/rocm-doctor-amd.yaml
 ```
+
+## Run the Pinned Supervisor on MI300X
+
+This is the headline Track-1 demo. After a healthy check, pin the deployment as the operator baseline and start the supervisor:
+
+```bash
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check        --config /tmp/rocm-doctor-amd.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor pin-baseline --config /tmp/rocm-doctor-amd.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor supervise    --config /tmp/rocm-doctor-amd.yaml --interval 30 --until-pass
+```
+
+In a second SSH session, drive the demo:
+
+```bash
+# 1) Inject a known drift the recipes know how to fix.
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor inject-failure wrong_endpoint_port --config /tmp/rocm-doctor-amd.yaml
+# Watch the supervisor stdout: intent=unintentional → heal → update_endpoint_url → verify ok.
+
+# 2) Make a deliberate operator change (e.g. raise the timeout).
+python3 -c "import yaml; p='/tmp/rocm-doctor-amd.yaml'; \
+  d=yaml.safe_load(open(p)); \
+  d['hardware']['deployment_target']='cluster-mi300x-ord1'; \
+  open(p,'w').write(yaml.safe_dump(d, sort_keys=False))"
+# intent=intentional → record_only. The supervisor logs the change and continues.
+
+# 3) Restore the baseline when you want to undo experiments.
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor restore-baseline --config /tmp/rocm-doctor-amd.yaml
+```
+
+Capture stdout (it's newline-delimited JSON) for the demo recording:
+
+```bash
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor supervise --config /tmp/rocm-doctor-amd.yaml --interval 30 --until-pass \
+  | tee /tmp/rocm-doctor-supervisor.log
+```
+
+The dashboard's Overview page shows the same loop graphically — pin/restore the baseline, start/stop the supervisor, and watch SSE events stream in. Use it for the screen recording.
 
 ## Cost Discipline
 

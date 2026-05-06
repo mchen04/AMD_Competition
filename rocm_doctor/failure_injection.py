@@ -12,6 +12,8 @@ SCENARIOS = {
     "context_length_too_large",
     "tool_parser_mismatch",
     "missing_rocm_device_flags",
+    "rocm_oom_inference",
+    "max_model_len_mismatch",
     "malformed_provider_output",
     "unknown_recipe",
     "unsafe_command",
@@ -35,6 +37,8 @@ SCENARIO_KINDS: dict[str, str] = {
     "context_length_too_large": "heal",
     "tool_parser_mismatch": "heal",
     "missing_rocm_device_flags": "heal",
+    "rocm_oom_inference": "heal",
+    "max_model_len_mismatch": "heal",
     "malformed_provider_output": "safety",
     "unknown_recipe": "safety",
     "unsafe_command": "safety",
@@ -65,6 +69,17 @@ def inject_failure(config_path: str | Path, scenario: str) -> dict[str, Any]:
         config["launch"]["device_flags"] = [
             flag for flag in config["launch"].get("device_flags", []) if str(flag) not in required
         ]
+    elif scenario == "rocm_oom_inference":
+        launch = config.setdefault("launch", {})
+        vllm_args = launch.setdefault("vllm_args", {})
+        vllm_args["gpu_memory_utilization"] = 0.99
+        _set_fake_mode(config, "hip_oom")
+    elif scenario == "max_model_len_mismatch":
+        # Server reports a max_model_len lower than what the harness has configured.
+        context = provider["model"]["context"]
+        safe = int(context.get("safe_max_tokens", 4096))
+        context["max_tokens"] = max(safe + 1, safe * 2)
+        _set_fake_mode(config, "max_model_len_exceeded")
     elif scenario == "malformed_provider_output":
         _set_fake_mode(config, "invalid_schema")
     elif scenario == "unknown_recipe":
@@ -97,11 +112,14 @@ def _bump_port(url: str) -> str:
 def _snapshot_bits(config: dict[str, Any]) -> dict[str, Any]:
     provider_id = str(config["active_model_provider"])
     provider = config["model_providers"][provider_id]
+    launch = config.get("launch", {}) or {}
+    vllm_args = launch.get("vllm_args", {}) or {}
     return {
         "model_provider": provider_id,
         "base_url": provider["model"]["endpoint"].get("base_url"),
         "max_model_len": provider["model"]["context"].get("max_tokens"),
         "tool_parser": provider["model"]["tool_calling"].get("parser"),
-        "device_flags": config["launch"].get("device_flags"),
+        "device_flags": launch.get("device_flags"),
+        "gpu_memory_utilization": vllm_args.get("gpu_memory_utilization"),
         "fake_provider_mode": config.get("diagnosis", {}).get("providers", {}).get("fake", {}).get("mode"),
     }

@@ -19,6 +19,53 @@
       ],
       "type": "object"
     },
+    "BaselineDiffResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "baseline_kind": {},
+        "diff": {},
+        "pinned": {},
+        "pinned_at": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "BaselinePinResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "config_path": {},
+        "paths": {},
+        "pinned": {}
+      },
+      "required": [
+        "pinned",
+        "config_path",
+        "paths"
+      ],
+      "type": "object"
+    },
+    "BaselineRestoreResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "config_path": {},
+        "restored": {}
+      },
+      "required": [
+        "restored",
+        "config_path"
+      ],
+      "type": "object"
+    },
+    "BaselineUnpinResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "unpinned": {}
+      },
+      "required": [
+        "unpinned"
+      ],
+      "type": "object"
+    },
     "CheckRequest": {
       "additionalProperties": true,
       "properties": {},
@@ -77,8 +124,8 @@
       "required": [
         "path",
         "selected",
-        "name",
-        "imported"
+        "imported",
+        "name"
       ],
       "type": "object"
     },
@@ -100,9 +147,9 @@
         "selected": {}
       },
       "required": [
+        "path",
         "selected",
-        "diagnosis_provider",
-        "path"
+        "diagnosis_provider"
       ],
       "type": "object"
     },
@@ -115,10 +162,10 @@
         "user_dir": {}
       },
       "required": [
-        "user_dir",
         "bundled",
-        "user",
-        "current_path"
+        "current_path",
+        "user_dir",
+        "user"
       ],
       "type": "object"
     },
@@ -129,6 +176,7 @@
         "description": {},
         "expectedRecipe": {},
         "id": {},
+        "kind": {},
         "label": {},
         "scenario": {}
       },
@@ -159,9 +207,9 @@
         "path": {}
       },
       "required": [
+        "path",
         "id",
-        "body",
-        "path"
+        "body"
       ],
       "type": "object"
     },
@@ -268,8 +316,8 @@
       },
       "required": [
         "run_id",
-        "scenario",
-        "diagnosis_provider"
+        "diagnosis_provider",
+        "scenario"
       ],
       "type": "object"
     },
@@ -303,19 +351,70 @@
         "workspace": {}
       },
       "required": [
-        "scenarios",
-        "incidents",
-        "recipes",
-        "providers",
-        "config_path",
-        "active_provider",
         "state_json",
-        "diagnosis_providers",
+        "config_path",
         "diagnosis_provider",
+        "recipes",
+        "active_provider",
+        "scenarios",
         "config_yaml",
-        "template_path",
+        "providers",
+        "failures",
         "workspace",
-        "failures"
+        "incidents",
+        "template_path",
+        "diagnosis_providers"
+      ],
+      "type": "object"
+    },
+    "SuperviseStartRequest": {
+      "additionalProperties": true,
+      "properties": {
+        "interval_seconds": {},
+        "provider_name": {},
+        "until_pass": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "SuperviseStartResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "diagnosis_provider": {},
+        "interval_seconds": {},
+        "run_id": {},
+        "until_pass": {}
+      },
+      "required": [
+        "run_id",
+        "diagnosis_provider",
+        "until_pass",
+        "interval_seconds"
+      ],
+      "type": "object"
+    },
+    "SuperviseStatusResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "diagnosis_provider": {},
+        "error": {},
+        "run_id": {},
+        "started_at": {},
+        "state": {},
+        "summary": {}
+      },
+      "required": [],
+      "type": "object"
+    },
+    "SuperviseStopResponse": {
+      "additionalProperties": true,
+      "properties": {
+        "run_id": {},
+        "stopping": {}
+      },
+      "required": [
+        "run_id",
+        "stopping"
       ],
       "type": "object"
     }
@@ -327,6 +426,24 @@
         "properties": {
           "provider_id": {}
         },
+        "required": [],
+        "type": "object"
+      },
+      "POST /api/baseline/pin": {
+        "additionalProperties": true,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "POST /api/baseline/restore": {
+        "additionalProperties": true,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "POST /api/baseline/unpin": {
+        "additionalProperties": true,
+        "properties": {},
         "required": [],
         "type": "object"
       },
@@ -371,9 +488,30 @@
         },
         "required": [],
         "type": "object"
+      },
+      "POST /api/supervise/start": {
+        "additionalProperties": true,
+        "properties": {
+          "interval_seconds": {},
+          "provider_name": {},
+          "until_pass": {}
+        },
+        "required": [],
+        "type": "object"
       }
     },
     "response": {
+      "GET /api/baseline/diff": {
+        "additionalProperties": true,
+        "properties": {
+          "baseline_kind": {},
+          "diff": {},
+          "pinned": {},
+          "pinned_at": {}
+        },
+        "required": [],
+        "type": "object"
+      },
       "GET /api/configs": {
         "additionalProperties": true,
         "properties": {
@@ -383,10 +521,10 @@
           "user_dir": {}
         },
         "required": [
-          "user_dir",
           "bundled",
-          "user",
-          "current_path"
+          "current_path",
+          "user_dir",
+          "user"
         ],
         "type": "object"
       },
@@ -398,9 +536,9 @@
           "path": {}
         },
         "required": [
+          "path",
           "id",
-          "body",
-          "path"
+          "body"
         ],
         "type": "object"
       },
@@ -443,20 +581,33 @@
           "workspace": {}
         },
         "required": [
-          "scenarios",
-          "incidents",
-          "recipes",
-          "providers",
-          "config_path",
-          "active_provider",
           "state_json",
-          "diagnosis_providers",
+          "config_path",
           "diagnosis_provider",
+          "recipes",
+          "active_provider",
+          "scenarios",
           "config_yaml",
-          "template_path",
+          "providers",
+          "failures",
           "workspace",
-          "failures"
+          "incidents",
+          "template_path",
+          "diagnosis_providers"
         ],
+        "type": "object"
+      },
+      "GET /api/supervise/{run_id}": {
+        "additionalProperties": true,
+        "properties": {
+          "diagnosis_provider": {},
+          "error": {},
+          "run_id": {},
+          "started_at": {},
+          "state": {},
+          "summary": {}
+        },
+        "required": [],
         "type": "object"
       },
       "POST /api/active-provider": {
@@ -466,6 +617,42 @@
         },
         "required": [
           "active_provider"
+        ],
+        "type": "object"
+      },
+      "POST /api/baseline/pin": {
+        "additionalProperties": true,
+        "properties": {
+          "config_path": {},
+          "paths": {},
+          "pinned": {}
+        },
+        "required": [
+          "pinned",
+          "config_path",
+          "paths"
+        ],
+        "type": "object"
+      },
+      "POST /api/baseline/restore": {
+        "additionalProperties": true,
+        "properties": {
+          "config_path": {},
+          "restored": {}
+        },
+        "required": [
+          "restored",
+          "config_path"
+        ],
+        "type": "object"
+      },
+      "POST /api/baseline/unpin": {
+        "additionalProperties": true,
+        "properties": {
+          "unpinned": {}
+        },
+        "required": [
+          "unpinned"
         ],
         "type": "object"
       },
@@ -492,8 +679,8 @@
         "required": [
           "path",
           "selected",
-          "name",
-          "imported"
+          "imported",
+          "name"
         ],
         "type": "object"
       },
@@ -505,9 +692,9 @@
           "selected": {}
         },
         "required": [
+          "path",
           "selected",
-          "diagnosis_provider",
-          "path"
+          "diagnosis_provider"
         ],
         "type": "object"
       },
@@ -532,8 +719,36 @@
         },
         "required": [
           "run_id",
-          "scenario",
-          "diagnosis_provider"
+          "diagnosis_provider",
+          "scenario"
+        ],
+        "type": "object"
+      },
+      "POST /api/supervise/start": {
+        "additionalProperties": true,
+        "properties": {
+          "diagnosis_provider": {},
+          "interval_seconds": {},
+          "run_id": {},
+          "until_pass": {}
+        },
+        "required": [
+          "run_id",
+          "diagnosis_provider",
+          "until_pass",
+          "interval_seconds"
+        ],
+        "type": "object"
+      },
+      "POST /api/supervise/{run_id}/stop": {
+        "additionalProperties": true,
+        "properties": {
+          "run_id": {},
+          "stopping": {}
+        },
+        "required": [
+          "run_id",
+          "stopping"
         ],
         "type": "object"
       }
@@ -551,7 +766,15 @@
     "verification.completed",
     "report.written",
     "done",
-    "error"
+    "error",
+    "supervisor.started",
+    "supervisor.stopped",
+    "cycle.started",
+    "cycle.healthy",
+    "cycle.skipped",
+    "cycle.unhealthy",
+    "cycle.completed",
+    "cycle.error"
   ],
   "title": "ROCm Doctor API",
   "version": "1"

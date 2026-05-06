@@ -89,6 +89,10 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     data["self_healing"].setdefault("max_attempts", 3)
     data["self_healing"].setdefault("fallback_model_provider", "")
     data["self_healing"].setdefault("developer_repair_mode", False)
+    data.setdefault("supervision", {})
+    sup_defaults = (_defaults().get("supervision") or {})
+    for key, default_value in sup_defaults.items():
+        data["supervision"].setdefault(key, default_value)
     data.setdefault("stress_tests", {})
     data["stress_tests"].setdefault("target_model_providers", [])
     data["stress_tests"].setdefault("timeout_seconds", 2.0)

@@ -16,6 +16,8 @@ hardware:
 launch:
   device_flags: ["/dev/kfd", "/dev/dri"]
   required_device_flags: ["/dev/kfd", "/dev/dri"]
+  vllm_args:
+    gpu_memory_utilization: 0.9
 
 service:
   name: fake-vllm
@@ -26,6 +28,13 @@ self_healing:
   max_attempts: 3
   fallback_model_provider: ""
   developer_repair_mode: false
+
+supervision:
+  enabled: false
+  interval_seconds: 30
+  until_pass: false
+  cooldown_seconds_after_heal: 60
+  cooldown_seconds_after_intent_skip: 300
 
 active_model_provider: fake-openai
 model_providers:
@@ -106,6 +115,8 @@ model_providers:
         - lower_max_model_len
         - set_tool_parser
         - set_rocm_device_flags
+        - lower_gpu_memory_utilization
+        - align_max_tokens_with_served
         - restart_known_service
         - synthesize_patch
     validation:

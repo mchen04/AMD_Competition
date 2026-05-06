@@ -5,15 +5,26 @@ import json
 import sys
 from pathlib import Path
 
+import threading
+
 from .adversarial_proxy import ADVERSARIAL_FAILURE_MODES, serve_forever as serve_adversarial_proxy
 from .config import ConfigError
 from .dashboard import serve_forever as serve_dashboard
 from .failure_injection import SCENARIOS, inject_failure
 from .fake_endpoint import serve_forever
+from .intent import diff_configs, baseline_for_intent
 from .operations import check_config, diagnose_config, heal_config, self_heal_config, verify_config
 from .providers import ProviderError
 from .reporting import generate_report
 from .schemas import to_jsonable
+from .state import (
+    load_pinned_baseline,
+    load_state,
+    pin_baseline,
+    restore_pinned_baseline,
+    unpin_baseline,
+)
+from .supervisor import supervise_config
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,6 +79,50 @@ def main(argv: list[str] | None = None) -> int:
                 upstream_timeout_seconds=args.upstream_timeout_seconds,
                 forward_before_failure=args.forward_before_failure,
             )
+            return 0
+        if args.command == "supervise":
+            stop_event = threading.Event()
+
+            def _on_event(name: str, data: dict) -> None:
+                line = {"event": name, **(data or {})}
+                print(json.dumps(to_jsonable(line), default=str))
+
+            try:
+                summary = supervise_config(
+                    args.config,
+                    provider_name=args.provider,
+                    interval_seconds=args.interval,
+                    until_pass=args.until_pass,
+                    on_event=_on_event,
+                    stop_event=stop_event,
+                    max_iterations=args.max_iterations,
+                )
+            except KeyboardInterrupt:
+                stop_event.set()
+                summary = {"stop_reason": "interrupted"}
+            _print(summary)
+            return 0
+        if args.command == "pin-baseline":
+            snapshot = pin_baseline(args.config)
+            _print({"pinned": True, "config_path": str(args.config), "paths": len(snapshot)})
+            return 0
+        if args.command == "unpin-baseline":
+            removed = unpin_baseline(args.config)
+            _print({"unpinned": removed, "config_path": str(args.config)})
+            return 0
+        if args.command == "restore-baseline":
+            restored = restore_pinned_baseline(args.config)
+            if restored is None:
+                print("no pinned baseline available", file=sys.stderr)
+                return 1
+            _print({"restored": True, "config_path": str(args.config)})
+            return 0
+        if args.command == "baseline-diff":
+            from .config import load_config
+            current = load_config(args.config)
+            baseline, kind = baseline_for_intent(args.config)
+            diff = diff_configs(current, baseline) if baseline else {"changed": [], "added": [], "removed": []}
+            _print({"baseline_kind": kind, "diff": diff})
             return 0
         if args.command == "dashboard":
             serve_dashboard(
@@ -139,6 +194,10 @@ def build_parser() -> argparse.ArgumentParser:
             "instruction_drift",
             "repetitive_output",
             "stream_interrupt",
+            "hip_oom",
+            "hip_oom_once",
+            "max_model_len_exceeded",
+            "max_model_len_exceeded_once",
         ],
     )
 
@@ -154,6 +213,34 @@ def build_parser() -> argparse.ArgumentParser:
     proxy.add_argument("--slow-response-seconds", type=float, default=2.0)
     proxy.add_argument("--upstream-timeout-seconds", type=float, default=60.0)
     proxy.add_argument("--forward-before-failure", action="store_true")
+
+    supervise = subparsers.add_parser(
+        "supervise",
+        help="continuously check / diagnose / classify intent / heal until stopped",
+    )
+    _add_config(supervise)
+    supervise.add_argument("--provider", default="rules", help="diagnosis/planning provider")
+    supervise.add_argument("--interval", type=float, default=None, help="seconds between cycles")
+    supervise.add_argument("--until-pass", action="store_true", help="raise heal max_attempts to effectively unbounded")
+    supervise.add_argument(
+        "--max-iterations",
+        type=int,
+        default=0,
+        help="stop after N cycles (0 = unbounded; mostly for testing)",
+    )
+
+    pin = subparsers.add_parser("pin-baseline", help="pin the current YAML as the operator baseline")
+    _add_config(pin)
+    unpin = subparsers.add_parser("unpin-baseline", help="forget the pinned baseline")
+    _add_config(unpin)
+    restore_baseline = subparsers.add_parser(
+        "restore-baseline", help="overwrite the YAML with the pinned baseline snapshot"
+    )
+    _add_config(restore_baseline)
+    baseline_diff = subparsers.add_parser(
+        "baseline-diff", help="show the dotted-path diff between current and pinned baseline"
+    )
+    _add_config(baseline_diff)
 
     dashboard = subparsers.add_parser("dashboard", help="serve the web console (web/) wired to the harness via /api/*")
     dashboard.add_argument("--host", default="127.0.0.1")

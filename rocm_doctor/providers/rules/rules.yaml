@@ -144,6 +144,47 @@ rules:
       suspected_cause: "The provider rate-limited the health chat request."
       recipes_dynamic: rate_limit
 
+  - id: chat_hip_oom
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+      probe_status_min: 500
+      body_contains_any:
+        - "hipErrorOutOfMemory"
+        - "HIP error: out of memory"
+        - "HIP out of memory"
+        - "ROCm out of memory"
+    emit:
+      failure_class: rocm_oom_inference
+      confidence: 0.93
+      probe: chat
+      evidence:
+        - "POST /v1/chat/completions returned HTTP {probe.status_code} with HIP OOM body"
+      suspected_cause: "vLLM allocator hit a HIP/ROCm out-of-memory condition during inference."
+      recommended_recipe_ids: [lower_gpu_memory_utilization, fallback_model_provider]
+
+  - id: chat_max_model_len_mismatch
+    when:
+      check: chat_completion
+      check_value: false
+      check_default: true
+      probe: chat
+      body_contains_any:
+        - "max_model_len"
+        - "maximum context length"
+        - "context length of"
+        - "is greater than the maximum"
+    emit:
+      failure_class: max_model_len_mismatch
+      confidence: 0.9
+      probe: chat
+      evidence:
+        - "vLLM reported a max_model_len mismatch on /v1/chat/completions"
+      suspected_cause: "Configured model.context.max_tokens exceeds the served vLLM max_model_len."
+      recommended_recipe_ids: [align_max_tokens_with_served, lower_max_model_len]
+
   - id: chat_5xx
     when:
       check: chat_completion

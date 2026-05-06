@@ -64,6 +64,17 @@ export interface IncidentDTO {
   durationMs?: number;
 }
 
+export interface SupervisorCycleEntry {
+  iteration: number;
+  ts: string;
+  outcome: "healthy" | "unhealthy" | "skipped" | "error";
+  recovered: boolean;
+  reason: string;
+  elapsed_seconds: number;
+  diagnosis?: { failure_class?: string; suspected_cause?: string } | null;
+  intent?: IntentClassification | null;
+}
+
 export interface SnapshotResponse {
   config_path: string;
   template_path: string;
@@ -74,7 +85,9 @@ export interface SnapshotResponse {
   failures: FailureDTO[];
   scenarios: string[];
   incidents: IncidentDTO[];
-  state_json: Record<string, unknown>;
+  state_json: Record<string, unknown> & {
+    supervisor_cycles?: SupervisorCycleEntry[];
+  };
   config_yaml: string;
   diagnosis_providers: string[];
   diagnosis_provider: string;
@@ -199,7 +212,15 @@ export type SSEEventName =
   | "verification.completed"
   | "report.written"
   | "done"
-  | "error";
+  | "error"
+  | "supervisor.started"
+  | "supervisor.stopped"
+  | "cycle.started"
+  | "cycle.healthy"
+  | "cycle.skipped"
+  | "cycle.unhealthy"
+  | "cycle.completed"
+  | "cycle.error";
 
 export interface SSEEvent<T = Record<string, unknown>> {
   event: SSEEventName;
@@ -207,4 +228,63 @@ export interface SSEEvent<T = Record<string, unknown>> {
   seq: number;
   ts: string;
   data: T;
+}
+
+// ── Intent classifier (mirrors rocm_doctor/schemas.py::IntentClassification) ──
+
+export type IntentValue = "intentional" | "unintentional" | "uncertain";
+export type IntentAction = "heal" | "record_only" | "ask_human";
+
+export interface IntentClassification {
+  intent: IntentValue;
+  confidence: number;
+  reasoning: string;
+  recommend_action: IntentAction;
+  baseline_kind: string;
+  diff_path_count: number;
+  provider: string;
+}
+
+// ── Baseline (Phase 3) ────────────────────────────────────────────────
+
+export interface BaselineDiffEntry {
+  path: string;
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface BaselineDiff {
+  changed: BaselineDiffEntry[];
+  added: BaselineDiffEntry[];
+  removed: BaselineDiffEntry[];
+}
+
+export interface BaselineState {
+  baseline_kind: "pinned" | "last_known_good" | "none";
+  diff: BaselineDiff;
+  pinned_at: string | null;
+  pinned: boolean;
+}
+
+// ── Supervisor (Phase 2) ──────────────────────────────────────────────
+
+export interface SupervisorRun {
+  run_id: string;
+  state: "running" | "done";
+  diagnosis_provider: string;
+  error: string | null;
+  summary: Record<string, unknown> | null;
+  started_at: number;
+}
+
+export interface SupervisorEvent extends SSEEvent {
+  event:
+    | "supervisor.started"
+    | "supervisor.stopped"
+    | "cycle.started"
+    | "cycle.healthy"
+    | "cycle.skipped"
+    | "cycle.unhealthy"
+    | "cycle.completed"
+    | "cycle.error";
 }

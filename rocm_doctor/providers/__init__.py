@@ -16,7 +16,12 @@ from .base import LLMDiagnosisProvider, OptionalProviderUnavailable, Provider, P
 from .fake import FakeProvider
 from .openai_compat import OpenAICompatibleDiagnosisProvider
 from .openai_responses import OpenAIResponsesProvider
-from .registry import diagnose_with_provider, get_provider, plan_with_provider
+from .registry import (
+    classify_intent_with_provider,
+    diagnose_with_provider,
+    get_provider,
+    plan_with_provider,
+)
 from .rules import RulesProvider
 
 __all__ = [
@@ -32,4 +37,5 @@ __all__ = [
     "get_provider",
     "diagnose_with_provider",
     "plan_with_provider",
+    "classify_intent_with_provider",
 ]

@@ -177,6 +177,32 @@ def _tighten_expected_health_response(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _lower_gpu_memory_utilization(config: dict[str, Any]) -> dict[str, Any]:
+    launch = config.get("launch", {}) or {}
+    vllm_args = launch.get("vllm_args", {}) or {}
+    if "gpu_memory_utilization" not in vllm_args:
+        raise ValueError("launch.vllm_args.gpu_memory_utilization is not configured")
+    current = float(vllm_args["gpu_memory_utilization"])
+    updated = max(0.3, round(current * 0.8, 3))
+    if updated >= current:
+        updated = max(0.3, round(current - 0.05, 3))
+    if updated >= current:
+        raise ValueError("gpu_memory_utilization is already at the floor")
+    return {"launch.vllm_args.gpu_memory_utilization": updated}
+
+
+def _align_max_tokens_with_served(config: dict[str, Any]) -> dict[str, Any]:
+    current = int(_active_value(config, "model.context.max_tokens"))
+    safe = int(_active_value(config, "model.context.safe_max_tokens"))
+    if safe < current:
+        target = safe
+    else:
+        target = max(1, current // 2)
+    if target >= current:
+        raise ValueError("max_tokens is already at or below the safe ceiling")
+    return {active_provider_path(config, "model.context.max_tokens"): target}
+
+
 BUILDERS: dict[str, ChangeBuilder] = {
     "noop": _noop,
     "retry_without_config_change": _noop,
@@ -194,6 +220,8 @@ BUILDERS: dict[str, ChangeBuilder] = {
     "lower_max_model_len": _lower_max_model_len,
     "set_tool_parser": _set_tool_parser,
     "set_rocm_device_flags": _rocm_flag_changes,
+    "lower_gpu_memory_utilization": _lower_gpu_memory_utilization,
+    "align_max_tokens_with_served": _align_max_tokens_with_served,
     "synthesize_patch": _noop,
     "restart_known_service": _restart_known_service,
 }

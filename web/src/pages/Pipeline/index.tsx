@@ -8,12 +8,12 @@ import { RecipePlan } from "./RecipePlan";
 import { Pipeline } from "./Pipeline";
 import { LogViewer } from "./LogViewer";
 
-interface LoopPageProps {
+interface PipelinePageProps {
   presetFailureId: string | null;
   presetRunKey: number;
 }
 
-export function LoopPage({ presetFailureId, presetRunKey }: LoopPageProps) {
+export function PipelinePage({ presetFailureId, presetRunKey }: PipelinePageProps) {
   const { snapshot, diagnosisProvider, setDiagnosisProvider } = useApp();
   const failures = snapshot?.failures ?? [];
   const counts = useMemo(() => {
@@ -80,7 +80,7 @@ export function LoopPage({ presetFailureId, presetRunKey }: LoopPageProps) {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Healing Loop</h1>
+          <h1 className="page-title">Pipeline</h1>
           <p className="page-sub">{subText}</p>
         </div>
         <div className="page-actions">

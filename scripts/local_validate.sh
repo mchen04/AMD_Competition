@@ -55,4 +55,9 @@ if [[ "${CHAOS:-0}" == "1" ]]; then
   PYTHON_BIN="${VENV}/bin/python" bash scripts/chaos_full.sh
 fi
 
+if [[ "${DEMO:-0}" == "1" ]]; then
+  echo "Running demo capture (DEMO=1)..."
+  PYTHON="${VENV}/bin/python" bash scripts/amd_demo.sh --local --quiet
+fi
+
 echo "Local validation complete."

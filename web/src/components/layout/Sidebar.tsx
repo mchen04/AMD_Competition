@@ -20,7 +20,7 @@ interface NavEntry {
 export function Sidebar({ route, setRoute, providerCount, recipeCount, incidentCount }: SidebarProps) {
   const items: NavEntry[] = [
     { icon: "grid", label: "Overview", route: "overview", group: "Operate" },
-    { icon: "activity", label: "Healing Loop", route: "loop", group: "Operate" },
+    { icon: "activity", label: "Pipeline", route: "pipeline", group: "Operate" },
     { icon: "server", label: "Providers", route: "providers", count: providerCount, group: "Operate" },
     { icon: "wrench", label: "Recipes", route: "recipes", count: recipeCount, group: "Library" },
     { icon: "flask", label: "Failures", route: "failures", group: "Library" },
@@ -37,7 +37,7 @@ export function Sidebar({ route, setRoute, providerCount, recipeCount, incidentC
       <div className="brand">
         <div className="brand-mark">RD</div>
         <div className="brand-name">
-          ROCm Doctor<span className="dim">v0.4</span>
+          ROCm Doctor<span className="dim">CI/CD</span>
         </div>
       </div>
       {groups.map((group) => (

@@ -27,6 +27,13 @@ self_healing:
   fallback_model_provider: ""
   developer_repair_mode: false
 
+supervision:
+  enabled: false
+  interval_seconds: 30
+  until_pass: false
+  cooldown_seconds_after_heal: 60
+  cooldown_seconds_after_intent_skip: 300
+
 active_model_provider: ollama-qwen3-0-6b
 model_providers:
   ollama-qwen3-0-6b:

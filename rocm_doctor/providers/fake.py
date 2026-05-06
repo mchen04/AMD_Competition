@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from ..schemas import DiagnosisResult, EvidenceBundle, RepairPlan
+from ..schemas import DiagnosisResult, EvidenceBundle, IntentClassification, RepairPlan
 from .rules import RulesProvider
 
 
@@ -46,6 +46,21 @@ class FakeProvider:
         if mode == "malformed_plan":
             return {"recipe_id": "set_tool_parser"}
         return plan
+
+    def classify_intent(
+        self,
+        diagnosis: DiagnosisResult,
+        evidence: EvidenceBundle,
+        config: dict[str, Any],
+        baseline_diff: dict[str, Any],
+        activity_log: list[dict[str, Any]],
+        baseline_kind: str,
+    ) -> IntentClassification:
+        result = self._rules.classify_intent(
+            diagnosis, evidence, config, baseline_diff, activity_log, baseline_kind
+        )
+        result.provider = self.name
+        return result
 
     def _mode(self) -> str:
         return str(self.spec.get("mode", "normal"))

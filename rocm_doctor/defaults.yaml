@@ -45,6 +45,13 @@ diagnosis:
       supports_json_schema: true
       supports_json_object: true
 
+supervision:
+  enabled: false
+  interval_seconds: 30
+  until_pass: false
+  cooldown_seconds_after_heal: 60
+  cooldown_seconds_after_intent_skip: 300
+
 monitor:
   default_timeout_seconds: 1.5
 

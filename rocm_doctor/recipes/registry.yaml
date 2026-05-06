@@ -226,6 +226,31 @@ recipes:
     rollback_strategy: "Restore the previous launch.device_flags list."
     verification_steps: ["config validation", "ROCm device flag check"]
 
+  - id: lower_gpu_memory_utilization
+    description: "Reduce launch.vllm_args.gpu_memory_utilization by 20% (floored at 0.3) so vLLM stops hitting HIP OOM."
+    human_label: "Lower vLLM GPU memory utilization"
+    tags: [launch, rocm, vllm, oom]
+    supported_failure_classes: [rocm_oom_inference]
+    supported_profile_capabilities: [chat_completions]
+    preconditions: ["launch.vllm_args.gpu_memory_utilization is configured as a float."]
+    config_path_templates: ["launch.vllm_args.gpu_memory_utilization"]
+    risk_level: low
+    rollback_strategy: "Restore the previous launch.vllm_args.gpu_memory_utilization value."
+    verification_steps: ["POST /v1/chat/completions health check"]
+
+  - id: align_max_tokens_with_served
+    description: "Trim model.context.max_tokens toward the served vLLM max_model_len when it exceeds the safe ceiling."
+    human_label: "Align max_tokens with served"
+    tags: [context, vllm]
+    supported_failure_classes: [max_model_len_mismatch]
+    supported_profile_capabilities: [context_length]
+    preconditions: ["active model provider safe context limit is configured."]
+    config_path_templates:
+      - "model_providers.{active_model_provider}.model.context.max_tokens"
+    risk_level: low
+    rollback_strategy: "Restore the previous active model provider max context limit."
+    verification_steps: ["config validation", "POST /v1/chat/completions"]
+
   - id: synthesize_patch
     description: "Apply a bounded patch synthesized by the diagnosis brain over the union of allowlisted recipe paths."
     human_label: "Synthesize bounded patch"
