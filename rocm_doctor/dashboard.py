@@ -35,7 +35,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .api.schemas import validate_request
 from .config import ConfigError, load_config, save_config
-from .failure_injection import SCENARIOS, inject_failure
+from .failure_injection import SCENARIO_KINDS, SCENARIOS, inject_failure
 from .healing_policy import FAILURE_TAXONOMY
 from .logging import get_logger
 from .operations import check_config, self_heal_config
@@ -150,13 +150,15 @@ def _get_dotted(data: dict[str, Any], dotted_key: str) -> Any:
 
 def _failure_dto(entry: Any) -> dict[str, Any]:
     fc = entry.failure_class
+    scenario = fc if fc in SCENARIOS else None
     return {
         "id": fc,
         "label": fc.replace("_", " "),
         "description": entry.description,
         "candidates": list(entry.candidate_recipe_ids),
         "expectedRecipe": entry.candidate_recipe_ids[0] if entry.candidate_recipe_ids else None,
-        "scenario": fc if fc in SCENARIOS else None,
+        "scenario": scenario,
+        "kind": SCENARIO_KINDS.get(scenario, "external") if scenario else "external",
     }
 
 
@@ -168,6 +170,7 @@ def _scenario_to_failure_dto(scenario: str) -> dict[str, Any]:
         "candidates": [],
         "expectedRecipe": None,
         "scenario": scenario,
+        "kind": SCENARIO_KINDS.get(scenario, "external"),
     }
 
 

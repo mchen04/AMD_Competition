@@ -730,6 +730,33 @@ input, select, textarea { font-family: inherit; }
   display: block;
   text-align: left;
 }
+
+.failure-section { padding: 10px 12px 12px; }
+.failure-section + .failure-section {
+  border-top: 1px dashed var(--line);
+  margin-top: 4px;
+}
+.failure-section-head {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 2px;
+}
+.failure-section-title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-0);
+}
+.failure-section-count {
+  font-size: 10px; color: var(--text-2);
+  background: var(--bg-3); padding: 1px 6px; border-radius: 999px;
+}
+.failure-section-hint {
+  margin: 0 0 8px 0;
+  font-size: 11px; color: var(--text-2); line-height: 1.4;
+}
+/* Group accents — keeps healable chips visually primary, safety/external secondary. */
+.chip--safety { border-color: var(--line); }
+.chip--safety.active { background: rgba(245, 158, 11, 0.14); border-color: rgba(245, 158, 11, 0.45); color: rgb(252, 211, 77); }
+.chip--external { opacity: 0.55; cursor: not-allowed; }
+.chip--external:hover { background: var(--bg-2); color: var(--text-1); }
 .recipes-grid {
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 10px;

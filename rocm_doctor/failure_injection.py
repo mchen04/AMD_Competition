@@ -20,6 +20,29 @@ SCENARIOS = {
 }
 
 
+# Categorises every injectable scenario:
+#   "heal"   — mutates the active model provider's YAML so a real probe fails;
+#              expected outcome is `update_endpoint_url`/`lower_max_model_len`/etc.
+#              firing and verifying healthy.
+#   "safety" — leaves the endpoint healthy but switches the FakeProvider into a
+#              malicious-output mode; expected outcome is the executor's safety
+#              gate rejecting the fake brain's recipe (use `provider_name=fake`).
+#   Failure classes from failures.yaml that have no entry here are taxonomy-only:
+#   the diagnosis can emit them when fed real evidence (e.g. via the adversarial
+#   proxy) but the dashboard's Inject button can't trigger them directly.
+SCENARIO_KINDS: dict[str, str] = {
+    "wrong_endpoint_port": "heal",
+    "context_length_too_large": "heal",
+    "tool_parser_mismatch": "heal",
+    "missing_rocm_device_flags": "heal",
+    "malformed_provider_output": "safety",
+    "unknown_recipe": "safety",
+    "unsafe_command": "safety",
+    "path_traversal": "safety",
+    "credential_modification": "safety",
+}
+
+
 def inject_failure(config_path: str | Path, scenario: str) -> dict[str, Any]:
     if scenario not in SCENARIOS:
         raise ValueError(f"unknown failure scenario: {scenario}")

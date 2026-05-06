@@ -40,6 +40,8 @@ export interface RecipeDTO {
   verifies: string[];
 }
 
+export type FailureKind = "heal" | "safety" | "external";
+
 export interface FailureDTO {
   id: string;
   label: string;
@@ -47,6 +49,7 @@ export interface FailureDTO {
   candidates: string[];
   expectedRecipe: string | null;
   scenario: string | null;
+  kind: FailureKind;
 }
 
 export interface IncidentDTO {

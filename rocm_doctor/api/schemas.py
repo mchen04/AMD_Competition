@@ -95,6 +95,11 @@ class FailureDTO(TypedDict, total=False):
     candidates: list[str]
     expectedRecipe: str | None
     scenario: str | None
+    # "heal" — clicking injects a real YAML break that a deterministic recipe heals.
+    # "safety" — clicking flips the FakeProvider into a malicious mode; pair with
+    #            provider_name="fake" to exercise the executor's safety gates.
+    # "external" — taxonomy-only; not directly injectable from the dashboard.
+    kind: str
 
 
 class IncidentDTO(TypedDict, total=False):

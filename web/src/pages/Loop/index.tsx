@@ -14,15 +14,41 @@ interface LoopPageProps {
 }
 
 export function LoopPage({ presetFailureId, presetRunKey }: LoopPageProps) {
-  const { snapshot } = useApp();
+  const { snapshot, diagnosisProvider, setDiagnosisProvider } = useApp();
   const failures = snapshot?.failures ?? [];
+  const counts = useMemo(() => {
+    const heal = failures.filter((f) => f.kind === "heal").length;
+    const safety = failures.filter((f) => f.kind === "safety").length;
+    const external = failures.filter((f) => f.kind === "external").length;
+    return { heal, safety, external };
+  }, [failures]);
   const initialFailure = useMemo(() => {
     if (presetFailureId) return presetFailureId;
-    return failures.find((f) => f.scenario)?.id ?? failures[0]?.id ?? "wrong_endpoint_port";
+    return (
+      failures.find((f) => f.kind === "heal")?.id ??
+      failures.find((f) => f.scenario)?.id ??
+      failures[0]?.id ??
+      "wrong_endpoint_port"
+    );
   }, [presetFailureId, failures]);
 
   const [failureId, setFailureId] = useState<string>(initialFailure);
   const run = useRun();
+
+  // When the user picks a safety probe, default the brain to `fake` so the
+  // executor's safety gates actually fire. Heal scenarios leave the brain
+  // alone so the user keeps whatever (rules / codex-cli / anthropic) they had.
+  const selectFailure = (id: string) => {
+    setFailureId(id);
+    const failure = failures.find((f) => f.id === id);
+    if (
+      failure?.kind === "safety" &&
+      diagnosisProvider !== "fake" &&
+      snapshot?.diagnosis_providers.includes("fake")
+    ) {
+      setDiagnosisProvider("fake");
+    }
+  };
 
   useEffect(() => {
     if (!presetRunKey) return;
@@ -46,15 +72,16 @@ export function LoopPage({ presetFailureId, presetRunKey }: LoopPageProps) {
     void run.start(failure?.scenario ?? null);
   };
 
+  const subText =
+    `${counts.heal} heal · ${counts.safety} safety · ${counts.external} reference. ` +
+    `check → diagnose → candidate recipes → apply → verify → report.`;
+
   return (
     <div className="page">
       <div className="page-head">
         <div>
           <h1 className="page-title">Healing Loop</h1>
-          <p className="page-sub">
-            check → diagnose → candidate recipes → apply → verify → report. {failures.length} failure
-            classes wired from the failure taxonomy.
-          </p>
+          <p className="page-sub">{subText}</p>
         </div>
         <div className="page-actions">
           <button className="btn" disabled={run.running} onClick={() => run.reset()}>
@@ -73,7 +100,7 @@ export function LoopPage({ presetFailureId, presetRunKey }: LoopPageProps) {
               failures={failures}
               selected={failureId}
               disabled={run.running}
-              onSelect={setFailureId}
+              onSelect={selectFailure}
             />
             <RecipePlan failure={failure} recipe={recipe} />
           </div>
