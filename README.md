@@ -85,6 +85,24 @@ The LLM cannot run shell, edit Python, change credentials, or write files outsid
 
 To add a model provider, add an entry under `model_providers`, set `active_model_provider`, choose capabilities, endpoint URLs, context limits, retry settings, prompt template fallbacks, and safe recipes. The core monitor and executor do not change.
 
+## Chaos Suite
+
+Opt-in pre-merge gate. The default `local_validate.sh` stays at ~30s; add `CHAOS=1` to run the full suite:
+
+```bash
+CHAOS=1 scripts/local_validate.sh
+```
+
+Five layers, aggregated into `docs/chaos-report-<date>.md`:
+
+1. **Deterministic chaos pytests** — randomized 50-round real/safety sweep, chained failures, learned-fix replay (`attempts == 1` after one priming run), recipe-sequence heal.
+2. **Adversarial-proxy sweep against real Ollama qwen3:0.6b** — all 16 `ADVERSARIAL_FAILURE_MODES` driven through detect → heal → verify. **5 modes heal** (`healthy`, `rate_limit_once`, `slow_response` → `increase_timeout`, `empty_chat_content_once` → `increase_health_max_tokens`, `stream_interrupt` → `disable_streaming`); **11 modes are detect-only by design** (`chat_500`, `models_500`, `rate_limit`, `chat_invalid_json`, `empty_response`, `partial_response`, `drop_connection`, `empty_chat_content`, `instruction_drift`, `hallucinated_tool_call`, `repetitive_output` — these inject *permanent* upstream failures that no config edit can recover from while the proxy is misbehaving). Layer fails if any expected-heal mode misses.
+3. **Two-brain stress matrix** — `PROVIDERS="rules openai-codex" scripts/stress_matrix.sh` walks providers × scenarios via the dashboard `/api/run`. Anthropic/OpenRouter excluded by default; add to `PROVIDERS` when keys are present.
+4. **Aggregator** — `scripts/chaos_full.sh`, exits non-zero on any layer failure.
+5. **Supervisor stability soak** — `scripts/chaos_supervisor.py` runs 100 cycles of randomized real-scenario injection. Pass criteria: 100% heal rate, mean attempts ≤ 1.5 by round 50 (proves learned fixes save cycles).
+
+The detect-only modes are a feature, not a gap: a self-healing system has to know when it can't help. See `docs/testing-and-amd-readiness.md` for the full env-var table.
+
 ## AMD Readiness
 
 AMD specifics live entirely in YAML: `hardware`, `launch.required_device_flags`, vLLM endpoint URL, context limits, safe recipes. For MI300X, activate a `model_providers` entry pointing at the deployed vLLM endpoint with `runtime_type: amd-vllm` and the appropriate ROCm device flags.

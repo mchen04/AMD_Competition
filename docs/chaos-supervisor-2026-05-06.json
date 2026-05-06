@@ -1,0 +1,124 @@
+{
+  "cycles": 10,
+  "heal_rate": 1.0,
+  "learned_fix_replays": 6,
+  "mean_attempts_second_half": 1.0,
+  "mean_duration_ms": 145.5,
+  "pass": true,
+  "pass_attempts": true,
+  "pass_heal_rate": true,
+  "rounds": [
+    {
+      "attempts": 1,
+      "duration_ms": 165,
+      "expected_recipe": "set_rocm_device_flags",
+      "healed": true,
+      "learned_fix_replay": false,
+      "recipe": "set_rocm_device_flags",
+      "round": 0,
+      "scenario": "missing_rocm_device_flags",
+      "verify_healthy": true
+    },
+    {
+      "attempts": 1,
+      "duration_ms": 151,
+      "expected_recipe": "set_rocm_device_flags",
+      "healed": true,
+      "learned_fix_replay": true,
+      "recipe": "set_rocm_device_flags",
+      "round": 1,
+      "scenario": "missing_rocm_device_flags",
+      "verify_healthy": true
+    },
+    {
+      "attempts": 1,
+      "duration_ms": 145,
+      "expected_recipe": "update_endpoint_url",
+      "healed": true,
+      "learned_fix_replay": false,
+      "recipe": "update_endpoint_url",
+      "round": 2,
+      "scenario": "wrong_endpoint_port",
+      "verify_healthy": true
+    },
+    {
+      "attempts": 1,
+      "duration_ms": 143,
+      "expected_recipe": "set_tool_parser",
+      "healed": true,
+      "learned_fix_replay": false,
+      "recipe": "set_tool_parser",
+      "round": 3,
+      "scenario": "tool_parser_mismatch",
+      "verify_healthy": true
+    },
+    {
+      "attempts": 1,
+      "duration_ms": 142,
+      "expected_recipe": "set_rocm_device_flags",
+      "healed": true,
+      "learned_fix_replay": true,
+      "recipe": "set_rocm_device_flags",
+      "round": 4,
+      "scenario": "missing_rocm_device_flags",
+      "verify_healthy": true
+    },
+    {
+      "attempts": 1,
+      "duration_ms": 140,
+      "expected_recipe": "set_rocm_device_flags",
+      "healed": true,
+      "learned_fix_replay": true,
+      "recipe": "set_rocm_device_flags",
+      "round": 5,
+      "scenario": "missing_rocm_device_flags",
+      "verify_healthy": true
+    },
+    {
+      "attempts": 1,
+      "duration_ms": 142,
+      "expected_recipe": "set_tool_parser",
+      "healed": true,
+      "learned_fix_replay": true,
+      "recipe": "set_tool_parser",
+      "round": 6,
+      "scenario": "tool_parser_mismatch",
+      "verify_healthy": true
+    },
+    {
+      "attempts": 1,
+      "duration_ms": 143,
+      "expected_recipe": "set_rocm_device_flags",
+      "healed": true,
+      "learned_fix_replay": true,
+      "recipe": "set_rocm_device_flags",
+      "round": 7,
+      "scenario": "missing_rocm_device_flags",
+      "verify_healthy": true
+    },
+    {
+      "attempts": 1,
+      "duration_ms": 142,
+      "expected_recipe": "set_tool_parser",
+      "healed": true,
+      "learned_fix_replay": true,
+      "recipe": "set_tool_parser",
+      "round": 8,
+      "scenario": "tool_parser_mismatch",
+      "verify_healthy": true
+    },
+    {
+      "attempts": 1,
+      "duration_ms": 142,
+      "expected_recipe": "lower_max_model_len",
+      "healed": true,
+      "learned_fix_replay": false,
+      "recipe": "lower_max_model_len",
+      "round": 9,
+      "scenario": "context_length_too_large",
+      "verify_healthy": true
+    }
+  ],
+  "seed": 0,
+  "started_at": "2026-05-06T08:06:06Z"
+}

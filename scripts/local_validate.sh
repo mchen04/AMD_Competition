@@ -50,4 +50,9 @@ else
   echo "Skipping Ollama checks: Ollama is unavailable or not serving on 127.0.0.1:11434."
 fi
 
+if [[ "${CHAOS:-0}" == "1" ]]; then
+  echo "Running chaos suite (CHAOS=1)..."
+  PYTHON_BIN="${VENV}/bin/python" bash scripts/chaos_full.sh
+fi
+
 echo "Local validation complete."

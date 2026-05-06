@@ -1,0 +1,935 @@
+{
+  "attempts": 2,
+  "duration_ms": 1202,
+  "healed": false,
+  "mode": "models_500",
+  "outcome": "unrecoverable",
+  "recipe_used": "fallback_model_provider",
+  "self_heal": {
+    "attempts": 2,
+    "final_verification": null,
+    "healthy": false,
+    "reason": "self-healing retry exhaustion after 2 attempts: no safe deterministic repair exists for permanent_500",
+    "recovered": false,
+    "repairs": [
+      {
+        "after": {
+          "active_model_provider": "ollama-qwen3-0-6b",
+          "diagnosis": {
+            "active_provider": "rules",
+            "providers": {
+              "anthropic": {
+                "api_key_env": "[REDACTED]",
+                "api_version": "2023-06-01",
+                "endpoint": "https://api.anthropic.com/v1/messages",
+                "max_tokens": 1024,
+                "model": "claude-sonnet-4-6",
+                "model_env": "ROCM_DOCTOR_ANTHROPIC_MODEL",
+                "retry": {
+                  "backoff_seconds": 0.0,
+                  "max_attempts": 1,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "templates": {
+                  "diagnosis_system": "../templates/openai_diagnosis_system.j2",
+                  "repair_system": "../templates/openai_repair_system.j2"
+                },
+                "timeout_seconds": 30.0,
+                "type": "anthropic-messages"
+              },
+              "fake": {
+                "mode": "normal",
+                "type": "fake"
+              },
+              "openai-codex": {
+                "api_key_env": "[REDACTED]",
+                "endpoint": "https://api.openai.com/v1/responses",
+                "model": "gpt-5.3-codex",
+                "model_env": "ROCM_DOCTOR_OPENAI_MODEL",
+                "retry": {
+                  "backoff_seconds": 0.0,
+                  "max_attempts": 1,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "templates": {
+                  "diagnosis_system": "../templates/openai_diagnosis_system.j2",
+                  "repair_system": "../templates/openai_repair_system.j2"
+                },
+                "timeout_seconds": 30.0,
+                "type": "openai-responses"
+              },
+              "openai-compatible": {
+                "api_key_env": "[REDACTED]",
+                "base_url": "https://openrouter.ai/api/v1",
+                "model": "openai/gpt-4o-mini",
+                "model_env": "ROCM_DOCTOR_OPENAI_COMPATIBLE_MODEL",
+                "require_api_key": "[REDACTED]",
+                "retry": {
+                  "backoff_seconds": 0.0,
+                  "max_attempts": 1,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "supports_json_object": true,
+                "supports_json_schema": true,
+                "templates": {
+                  "diagnosis_system": "../templates/openai_diagnosis_system.j2",
+                  "repair_system": "../templates/openai_repair_system.j2"
+                },
+                "timeout_seconds": 30.0,
+                "type": "openai-chat-completions"
+              },
+              "rules": {
+                "type": "rules"
+              }
+            }
+          },
+          "hardware": {
+            "accelerator": "cpu-or-available-gpu",
+            "amd": {
+              "benchmark_profile": "tiny-local",
+              "device_flags": [],
+              "rocm_required": false
+            },
+            "backend": "local",
+            "deployment_target": "developer-laptop",
+            "runtime": "ollama"
+          },
+          "launch": {
+            "device_flags": [],
+            "required_device_flags": []
+          },
+          "model_providers": {
+            "ollama-qwen3-0-6b": {
+              "adapter": "openai-compatible",
+              "capabilities": {
+                "chat_completions": true,
+                "context_length": true,
+                "models": true,
+                "restart": false,
+                "rocm_device_flags": false,
+                "tool_calls": false
+              },
+              "endpoint_protocol": "openai-compatible",
+              "health": {
+                "probes": [
+                  "endpoint_models",
+                  "chat_completion",
+                  "context_length"
+                ],
+                "skip_reasons": {
+                  "restart": "ROCm Doctor does not control the local Ollama service",
+                  "rocm_device_flags": "local Ollama does not use ROCm container device flags",
+                  "tool_calls": "native tool-call output is not required for this tiny Ollama profile"
+                }
+              },
+              "model": {
+                "context": {
+                  "max_tokens": 1024,
+                  "safe_max_tokens": 2048
+                },
+                "endpoint": {
+                  "base_url": "http://127.0.0.1:8001/v1",
+                  "expected_base_url": "http://127.0.0.1:8001/v1",
+                  "wrong_base_url": "http://127.0.0.1:9/v1"
+                },
+                "id": "qwen3:0.6b",
+                "tool_calling": {
+                  "enabled": false,
+                  "expected_parser": "",
+                  "parser": "",
+                  "parser_header": "X-ROCm-Doctor-Tool-Parser"
+                }
+              },
+              "repair": {
+                "known_failure_signatures": {
+                  "context_length_too_large": [
+                    "max_model_len exceeds safe_max_model_len"
+                  ],
+                  "wrong_endpoint_port": [
+                    "GET /v1/models failed",
+                    "configured URL differs from expected URL"
+                  ]
+                },
+                "safe_recipes": [
+                  "noop",
+                  "retry_without_config_change",
+                  "update_endpoint_url",
+                  "increase_health_max_tokens",
+                  "lower_health_max_tokens",
+                  "increase_timeout",
+                  "increase_retry_backoff",
+                  "disable_streaming",
+                  "switch_prompt_template",
+                  "fallback_model_provider",
+                  "restore_last_known_good_config",
+                  "tighten_expected_health_response",
+                  "lower_max_model_len"
+                ]
+              },
+              "request": {
+                "retry": {
+                  "backoff_seconds": 0.25,
+                  "max_attempts": 2,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "stream": false,
+                "timeout_seconds": 30.0
+              },
+              "runtime_type": "ollama",
+              "templates": {
+                "health_chat": "../templates/health_chat.j2",
+                "health_chat_fallbacks": [
+                  "../templates/health_chat.qwen_strict.j2",
+                  "../templates/health_chat.no_reasoning.j2",
+                  "../templates/health_chat.minimal.j2"
+                ],
+                "tool_call": "../templates/tool_call_prompt.j2"
+              },
+              "validation": {
+                "expected_health_response": "ROCM_DOCTOR_OK",
+                "health_max_tokens": 256,
+                "health_response_match": "case_insensitive",
+                "max_health_response_chars": 160,
+                "max_repeated_token_count": 8
+              }
+            },
+            "ollama-smollm2-135m": {
+              "adapter": "openai-compatible",
+              "capabilities": {
+                "chat_completions": true,
+                "context_length": true,
+                "models": true,
+                "restart": false,
+                "rocm_device_flags": false,
+                "tool_calls": false
+              },
+              "endpoint_protocol": "openai-compatible",
+              "health": {
+                "probes": [
+                  "endpoint_models",
+                  "chat_completion",
+                  "context_length"
+                ],
+                "skip_reasons": {
+                  "restart": "ROCm Doctor does not control the local Ollama service",
+                  "rocm_device_flags": "local Ollama does not use ROCm container device flags",
+                  "tool_calls": "native tool-call output is not required for this tiny Ollama profile"
+                }
+              },
+              "model": {
+                "context": {
+                  "max_tokens": 512,
+                  "safe_max_tokens": 1024
+                },
+                "endpoint": {
+                  "base_url": "http://127.0.0.1:11434/v1",
+                  "expected_base_url": "http://127.0.0.1:11434/v1",
+                  "wrong_base_url": "http://127.0.0.1:11435/v1"
+                },
+                "id": "smollm2:135m",
+                "tool_calling": {
+                  "enabled": false,
+                  "expected_parser": "",
+                  "parser": "",
+                  "parser_header": "X-ROCm-Doctor-Tool-Parser"
+                }
+              },
+              "repair": {
+                "known_failure_signatures": {
+                  "context_length_too_large": [
+                    "max_model_len exceeds safe_max_model_len"
+                  ],
+                  "wrong_endpoint_port": [
+                    "GET /v1/models failed",
+                    "configured URL differs from expected URL"
+                  ]
+                },
+                "safe_recipes": [
+                  "noop",
+                  "retry_without_config_change",
+                  "update_endpoint_url",
+                  "increase_health_max_tokens",
+                  "lower_health_max_tokens",
+                  "increase_timeout",
+                  "increase_retry_backoff",
+                  "disable_streaming",
+                  "switch_prompt_template",
+                  "fallback_model_provider",
+                  "restore_last_known_good_config",
+                  "tighten_expected_health_response",
+                  "lower_max_model_len"
+                ]
+              },
+              "request": {
+                "retry": {
+                  "backoff_seconds": 0.25,
+                  "max_attempts": 2,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "stream": false,
+                "timeout_seconds": 30.0
+              },
+              "runtime_type": "ollama",
+              "templates": {
+                "health_chat": "../templates/health_chat.j2",
+                "health_chat_fallbacks": [
+                  "../templates/health_chat.qwen_strict.j2",
+                  "../templates/health_chat.no_reasoning.j2",
+                  "../templates/health_chat.minimal.j2"
+                ],
+                "tool_call": "../templates/tool_call_prompt.j2"
+              },
+              "validation": {
+                "expected_health_response": "ROCM_DOCTOR_OK",
+                "health_max_tokens": 256,
+                "health_response_match": "case_insensitive",
+                "max_health_response_chars": 160,
+                "max_repeated_token_count": 8
+              }
+            },
+            "ollama-tinyllama-1-1b": {
+              "adapter": "openai-compatible",
+              "capabilities": {
+                "chat_completions": true,
+                "context_length": true,
+                "models": true,
+                "restart": false,
+                "rocm_device_flags": false,
+                "tool_calls": false
+              },
+              "endpoint_protocol": "openai-compatible",
+              "health": {
+                "probes": [
+                  "endpoint_models",
+                  "chat_completion",
+                  "context_length"
+                ],
+                "skip_reasons": {
+                  "restart": "ROCm Doctor does not control the local Ollama service",
+                  "rocm_device_flags": "local Ollama does not use ROCm container device flags",
+                  "tool_calls": "native tool-call output is not required for this tiny Ollama profile"
+                }
+              },
+              "model": {
+                "context": {
+                  "max_tokens": 768,
+                  "safe_max_tokens": 1536
+                },
+                "endpoint": {
+                  "base_url": "http://127.0.0.1:11434/v1",
+                  "expected_base_url": "http://127.0.0.1:11434/v1",
+                  "wrong_base_url": "http://127.0.0.1:11435/v1"
+                },
+                "id": "tinyllama:1.1b",
+                "tool_calling": {
+                  "enabled": false,
+                  "expected_parser": "",
+                  "parser": "",
+                  "parser_header": "X-ROCm-Doctor-Tool-Parser"
+                }
+              },
+              "repair": {
+                "known_failure_signatures": {
+                  "context_length_too_large": [
+                    "max_model_len exceeds safe_max_model_len"
+                  ],
+                  "wrong_endpoint_port": [
+                    "GET /v1/models failed",
+                    "configured URL differs from expected URL"
+                  ]
+                },
+                "safe_recipes": [
+                  "noop",
+                  "retry_without_config_change",
+                  "update_endpoint_url",
+                  "increase_health_max_tokens",
+                  "lower_health_max_tokens",
+                  "increase_timeout",
+                  "increase_retry_backoff",
+                  "disable_streaming",
+                  "switch_prompt_template",
+                  "fallback_model_provider",
+                  "restore_last_known_good_config",
+                  "tighten_expected_health_response",
+                  "lower_max_model_len"
+                ]
+              },
+              "request": {
+                "retry": {
+                  "backoff_seconds": 0.25,
+                  "max_attempts": 2,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "stream": false,
+                "timeout_seconds": 30.0
+              },
+              "runtime_type": "ollama",
+              "templates": {
+                "health_chat": "../templates/health_chat.j2",
+                "health_chat_fallbacks": [
+                  "../templates/health_chat.qwen_strict.j2",
+                  "../templates/health_chat.no_reasoning.j2",
+                  "../templates/health_chat.minimal.j2"
+                ],
+                "tool_call": "../templates/tool_call_prompt.j2"
+              },
+              "validation": {
+                "expected_health_response": "ROCM_DOCTOR_OK",
+                "health_max_tokens": 256,
+                "health_response_match": "case_insensitive",
+                "max_health_response_chars": 160,
+                "max_repeated_token_count": 8
+              }
+            }
+          },
+          "reports_dir": "/var/folders/0c/jjtf9ntd6y15p0bv_143pm040000gn/T/rocm-doctor-chaos-qwen.XXXXXX.BIj9wgRqvq/reports",
+          "self_healing": {
+            "developer_repair_mode": false,
+            "fallback_model_provider": "",
+            "max_attempts": 3
+          },
+          "service": {
+            "name": "ollama",
+            "restart_count": 0,
+            "restart_mode": "external"
+          },
+          "state_file": "/var/folders/0c/jjtf9ntd6y15p0bv_143pm040000gn/T/rocm-doctor-chaos-qwen.XXXXXX.BIj9wgRqvq/.state.json",
+          "stress_tests": {
+            "target_model_providers": [
+              "ollama-qwen3-0-6b",
+              "ollama-smollm2-135m",
+              "ollama-tinyllama-1-1b"
+            ],
+            "timeout_seconds": 30.0
+          },
+          "version": 1,
+          "workspace": "/var/folders/0c/jjtf9ntd6y15p0bv_143pm040000gn/T/rocm-doctor-chaos-qwen.XXXXXX.BIj9wgRqvq"
+        },
+        "applied": false,
+        "applied_recipe_ids": [],
+        "before": {
+          "active_model_provider": "ollama-qwen3-0-6b",
+          "diagnosis": {
+            "active_provider": "rules",
+            "providers": {
+              "anthropic": {
+                "api_key_env": "[REDACTED]",
+                "api_version": "2023-06-01",
+                "endpoint": "https://api.anthropic.com/v1/messages",
+                "max_tokens": 1024,
+                "model": "claude-sonnet-4-6",
+                "model_env": "ROCM_DOCTOR_ANTHROPIC_MODEL",
+                "retry": {
+                  "backoff_seconds": 0.0,
+                  "max_attempts": 1,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "templates": {
+                  "diagnosis_system": "../templates/openai_diagnosis_system.j2",
+                  "repair_system": "../templates/openai_repair_system.j2"
+                },
+                "timeout_seconds": 30.0,
+                "type": "anthropic-messages"
+              },
+              "fake": {
+                "mode": "normal",
+                "type": "fake"
+              },
+              "openai-codex": {
+                "api_key_env": "[REDACTED]",
+                "endpoint": "https://api.openai.com/v1/responses",
+                "model": "gpt-5.3-codex",
+                "model_env": "ROCM_DOCTOR_OPENAI_MODEL",
+                "retry": {
+                  "backoff_seconds": 0.0,
+                  "max_attempts": 1,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "templates": {
+                  "diagnosis_system": "../templates/openai_diagnosis_system.j2",
+                  "repair_system": "../templates/openai_repair_system.j2"
+                },
+                "timeout_seconds": 30.0,
+                "type": "openai-responses"
+              },
+              "openai-compatible": {
+                "api_key_env": "[REDACTED]",
+                "base_url": "https://openrouter.ai/api/v1",
+                "model": "openai/gpt-4o-mini",
+                "model_env": "ROCM_DOCTOR_OPENAI_COMPATIBLE_MODEL",
+                "require_api_key": "[REDACTED]",
+                "retry": {
+                  "backoff_seconds": 0.0,
+                  "max_attempts": 1,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "supports_json_object": true,
+                "supports_json_schema": true,
+                "templates": {
+                  "diagnosis_system": "../templates/openai_diagnosis_system.j2",
+                  "repair_system": "../templates/openai_repair_system.j2"
+                },
+                "timeout_seconds": 30.0,
+                "type": "openai-chat-completions"
+              },
+              "rules": {
+                "type": "rules"
+              }
+            }
+          },
+          "hardware": {
+            "accelerator": "cpu-or-available-gpu",
+            "amd": {
+              "benchmark_profile": "tiny-local",
+              "device_flags": [],
+              "rocm_required": false
+            },
+            "backend": "local",
+            "deployment_target": "developer-laptop",
+            "runtime": "ollama"
+          },
+          "launch": {
+            "device_flags": [],
+            "required_device_flags": []
+          },
+          "model_providers": {
+            "ollama-qwen3-0-6b": {
+              "adapter": "openai-compatible",
+              "capabilities": {
+                "chat_completions": true,
+                "context_length": true,
+                "models": true,
+                "restart": false,
+                "rocm_device_flags": false,
+                "tool_calls": false
+              },
+              "endpoint_protocol": "openai-compatible",
+              "health": {
+                "probes": [
+                  "endpoint_models",
+                  "chat_completion",
+                  "context_length"
+                ],
+                "skip_reasons": {
+                  "restart": "ROCm Doctor does not control the local Ollama service",
+                  "rocm_device_flags": "local Ollama does not use ROCm container device flags",
+                  "tool_calls": "native tool-call output is not required for this tiny Ollama profile"
+                }
+              },
+              "model": {
+                "context": {
+                  "max_tokens": 1024,
+                  "safe_max_tokens": 2048
+                },
+                "endpoint": {
+                  "base_url": "http://127.0.0.1:8001/v1",
+                  "expected_base_url": "http://127.0.0.1:8001/v1",
+                  "wrong_base_url": "http://127.0.0.1:9/v1"
+                },
+                "id": "qwen3:0.6b",
+                "tool_calling": {
+                  "enabled": false,
+                  "expected_parser": "",
+                  "parser": "",
+                  "parser_header": "X-ROCm-Doctor-Tool-Parser"
+                }
+              },
+              "repair": {
+                "known_failure_signatures": {
+                  "context_length_too_large": [
+                    "max_model_len exceeds safe_max_model_len"
+                  ],
+                  "wrong_endpoint_port": [
+                    "GET /v1/models failed",
+                    "configured URL differs from expected URL"
+                  ]
+                },
+                "safe_recipes": [
+                  "noop",
+                  "retry_without_config_change",
+                  "update_endpoint_url",
+                  "increase_health_max_tokens",
+                  "lower_health_max_tokens",
+                  "increase_timeout",
+                  "increase_retry_backoff",
+                  "disable_streaming",
+                  "switch_prompt_template",
+                  "fallback_model_provider",
+                  "restore_last_known_good_config",
+                  "tighten_expected_health_response",
+                  "lower_max_model_len"
+                ]
+              },
+              "request": {
+                "retry": {
+                  "backoff_seconds": 0.25,
+                  "max_attempts": 2,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "stream": false,
+                "timeout_seconds": 30.0
+              },
+              "runtime_type": "ollama",
+              "templates": {
+                "health_chat": "../templates/health_chat.j2",
+                "health_chat_fallbacks": [
+                  "../templates/health_chat.qwen_strict.j2",
+                  "../templates/health_chat.no_reasoning.j2",
+                  "../templates/health_chat.minimal.j2"
+                ],
+                "tool_call": "../templates/tool_call_prompt.j2"
+              },
+              "validation": {
+                "expected_health_response": "ROCM_DOCTOR_OK",
+                "health_max_tokens": 256,
+                "health_response_match": "case_insensitive",
+                "max_health_response_chars": 160,
+                "max_repeated_token_count": 8
+              }
+            },
+            "ollama-smollm2-135m": {
+              "adapter": "openai-compatible",
+              "capabilities": {
+                "chat_completions": true,
+                "context_length": true,
+                "models": true,
+                "restart": false,
+                "rocm_device_flags": false,
+                "tool_calls": false
+              },
+              "endpoint_protocol": "openai-compatible",
+              "health": {
+                "probes": [
+                  "endpoint_models",
+                  "chat_completion",
+                  "context_length"
+                ],
+                "skip_reasons": {
+                  "restart": "ROCm Doctor does not control the local Ollama service",
+                  "rocm_device_flags": "local Ollama does not use ROCm container device flags",
+                  "tool_calls": "native tool-call output is not required for this tiny Ollama profile"
+                }
+              },
+              "model": {
+                "context": {
+                  "max_tokens": 512,
+                  "safe_max_tokens": 1024
+                },
+                "endpoint": {
+                  "base_url": "http://127.0.0.1:11434/v1",
+                  "expected_base_url": "http://127.0.0.1:11434/v1",
+                  "wrong_base_url": "http://127.0.0.1:11435/v1"
+                },
+                "id": "smollm2:135m",
+                "tool_calling": {
+                  "enabled": false,
+                  "expected_parser": "",
+                  "parser": "",
+                  "parser_header": "X-ROCm-Doctor-Tool-Parser"
+                }
+              },
+              "repair": {
+                "known_failure_signatures": {
+                  "context_length_too_large": [
+                    "max_model_len exceeds safe_max_model_len"
+                  ],
+                  "wrong_endpoint_port": [
+                    "GET /v1/models failed",
+                    "configured URL differs from expected URL"
+                  ]
+                },
+                "safe_recipes": [
+                  "noop",
+                  "retry_without_config_change",
+                  "update_endpoint_url",
+                  "increase_health_max_tokens",
+                  "lower_health_max_tokens",
+                  "increase_timeout",
+                  "increase_retry_backoff",
+                  "disable_streaming",
+                  "switch_prompt_template",
+                  "fallback_model_provider",
+                  "restore_last_known_good_config",
+                  "tighten_expected_health_response",
+                  "lower_max_model_len"
+                ]
+              },
+              "request": {
+                "retry": {
+                  "backoff_seconds": 0.25,
+                  "max_attempts": 2,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "stream": false,
+                "timeout_seconds": 30.0
+              },
+              "runtime_type": "ollama",
+              "templates": {
+                "health_chat": "../templates/health_chat.j2",
+                "health_chat_fallbacks": [
+                  "../templates/health_chat.qwen_strict.j2",
+                  "../templates/health_chat.no_reasoning.j2",
+                  "../templates/health_chat.minimal.j2"
+                ],
+                "tool_call": "../templates/tool_call_prompt.j2"
+              },
+              "validation": {
+                "expected_health_response": "ROCM_DOCTOR_OK",
+                "health_max_tokens": 256,
+                "health_response_match": "case_insensitive",
+                "max_health_response_chars": 160,
+                "max_repeated_token_count": 8
+              }
+            },
+            "ollama-tinyllama-1-1b": {
+              "adapter": "openai-compatible",
+              "capabilities": {
+                "chat_completions": true,
+                "context_length": true,
+                "models": true,
+                "restart": false,
+                "rocm_device_flags": false,
+                "tool_calls": false
+              },
+              "endpoint_protocol": "openai-compatible",
+              "health": {
+                "probes": [
+                  "endpoint_models",
+                  "chat_completion",
+                  "context_length"
+                ],
+                "skip_reasons": {
+                  "restart": "ROCm Doctor does not control the local Ollama service",
+                  "rocm_device_flags": "local Ollama does not use ROCm container device flags",
+                  "tool_calls": "native tool-call output is not required for this tiny Ollama profile"
+                }
+              },
+              "model": {
+                "context": {
+                  "max_tokens": 768,
+                  "safe_max_tokens": 1536
+                },
+                "endpoint": {
+                  "base_url": "http://127.0.0.1:11434/v1",
+                  "expected_base_url": "http://127.0.0.1:11434/v1",
+                  "wrong_base_url": "http://127.0.0.1:11435/v1"
+                },
+                "id": "tinyllama:1.1b",
+                "tool_calling": {
+                  "enabled": false,
+                  "expected_parser": "",
+                  "parser": "",
+                  "parser_header": "X-ROCm-Doctor-Tool-Parser"
+                }
+              },
+              "repair": {
+                "known_failure_signatures": {
+                  "context_length_too_large": [
+                    "max_model_len exceeds safe_max_model_len"
+                  ],
+                  "wrong_endpoint_port": [
+                    "GET /v1/models failed",
+                    "configured URL differs from expected URL"
+                  ]
+                },
+                "safe_recipes": [
+                  "noop",
+                  "retry_without_config_change",
+                  "update_endpoint_url",
+                  "increase_health_max_tokens",
+                  "lower_health_max_tokens",
+                  "increase_timeout",
+                  "increase_retry_backoff",
+                  "disable_streaming",
+                  "switch_prompt_template",
+                  "fallback_model_provider",
+                  "restore_last_known_good_config",
+                  "tighten_expected_health_response",
+                  "lower_max_model_len"
+                ]
+              },
+              "request": {
+                "retry": {
+                  "backoff_seconds": 0.25,
+                  "max_attempts": 2,
+                  "retry_on_invalid_json": true,
+                  "retry_on_timeout": true,
+                  "retry_status_codes": [
+                    408,
+                    409,
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                  ]
+                },
+                "stream": false,
+                "timeout_seconds": 30.0
+              },
+              "runtime_type": "ollama",
+              "templates": {
+                "health_chat": "../templates/health_chat.j2",
+                "health_chat_fallbacks": [
+                  "../templates/health_chat.qwen_strict.j2",
+                  "../templates/health_chat.no_reasoning.j2",
+                  "../templates/health_chat.minimal.j2"
+                ],
+                "tool_call": "../templates/tool_call_prompt.j2"
+              },
+              "validation": {
+                "expected_health_response": "ROCM_DOCTOR_OK",
+                "health_max_tokens": 256,
+                "health_response_match": "case_insensitive",
+                "max_health_response_chars": 160,
+                "max_repeated_token_count": 8
+              }
+            }
+          },
+          "reports_dir": "/var/folders/0c/jjtf9ntd6y15p0bv_143pm040000gn/T/rocm-doctor-chaos-qwen.XXXXXX.BIj9wgRqvq/reports",
+          "self_healing": {
+            "developer_repair_mode": false,
+            "fallback_model_provider": "",
+            "max_attempts": 3
+          },
+          "service": {
+            "name": "ollama",
+            "restart_count": 0,
+            "restart_mode": "external"
+          },
+          "state_file": "/var/folders/0c/jjtf9ntd6y15p0bv_143pm040000gn/T/rocm-doctor-chaos-qwen.XXXXXX.BIj9wgRqvq/.state.json",
+          "stress_tests": {
+            "target_model_providers": [
+              "ollama-qwen3-0-6b",
+              "ollama-smollm2-135m",
+              "ollama-tinyllama-1-1b"
+            ],
+            "timeout_seconds": 30.0
+          },
+          "version": 1,
+          "workspace": "/var/folders/0c/jjtf9ntd6y15p0bv_143pm040000gn/T/rocm-doctor-chaos-qwen.XXXXXX.BIj9wgRqvq"
+        },
+        "changed_paths": [],
+        "failure_class": "permanent_500",
+        "learned": false,
+        "reason": "recipe precondition failed: no fallback model provider is configured",
+        "recipe_id": "fallback_model_provider",
+        "rejected": true,
+        "rollback": "No changes were made.",
+        "rolled_back": false,
+        "verification_message": ""
+      }
+    ],
+    "unrecoverable": true
+  }
+}
