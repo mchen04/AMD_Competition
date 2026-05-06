@@ -13,6 +13,7 @@ from ..schemas import (
 )
 from .anthropic import AnthropicProvider
 from .base import OptionalProviderUnavailable, Provider, ProviderError
+from .codex_cli import CodexCliProvider
 from .fake import FakeProvider
 from .openai_compat import OpenAICompatibleDiagnosisProvider
 from .openai_responses import OpenAIResponsesProvider
@@ -25,6 +26,7 @@ _FACTORIES: dict[str, Callable[[str, dict[str, Any]], Provider]] = {
     "openai-responses": lambda name, spec: OpenAIResponsesProvider(name, spec),
     "anthropic-messages": lambda name, spec: AnthropicProvider(name, spec),
     "openai-chat-completions": lambda name, spec: OpenAICompatibleDiagnosisProvider(name, spec),
+    "codex-cli": lambda name, spec: CodexCliProvider(name, spec),
 }
 
 

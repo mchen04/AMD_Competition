@@ -92,15 +92,14 @@ This runs `scripts/chaos_full.sh`, which aggregates five layers and writes `docs
    - Skips cleanly if `ollama` is not on `$PATH` or `127.0.0.1:11434/v1/models` is unreachable.
 
 3. **Layer 3 — Two-brain stress matrix run** (`scripts/stress_matrix.sh`).
-   - Drives the dashboard `/api/run` matrix across providers × scenarios. Default `PROVIDERS` is `"rules openai-codex anthropic openai-compatible"`; for chaos validation runs override to the brains with keys actually present:
+   - Drives the dashboard `/api/run` matrix across providers × scenarios. Default `PROVIDERS` is `"rules codex-cli anthropic openai-compatible"`; for chaos validation runs override to the brains with credentials actually present:
 
    ```bash
-   OPENAI_API_KEY=... \
-     PROVIDERS="rules openai-codex" \
+   PROVIDERS="rules codex-cli" \
      scripts/stress_matrix.sh
    ```
 
-   - Anthropic and OpenRouter are explicitly excluded (rather than emitted as `no_attempt` rows) so the markdown reflects the actual scope of the run. Re-add them to `PROVIDERS` (and set `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY`) when keys are available.
+   - `codex-cli` shells out to the locally-installed [Codex CLI](https://github.com/openai/codex); auth is whatever `codex login` set up (ChatGPT subscription or Codex's own API key). Anthropic and OpenRouter are explicitly excluded (rather than emitted as `no_attempt` rows) so the markdown reflects the actual scope of the run. Re-add them to `PROVIDERS` (and set `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY`) when keys are available.
 
 4. **Layer 4 — Aggregate gate** (`scripts/chaos_full.sh`). Runs Layers 1–3 + Layer 5, writes a per-layer pass/fail summary to `docs/chaos-report-<date>.md`, exits non-zero if any layer fails.
 
@@ -111,8 +110,9 @@ This runs `scripts/chaos_full.sh`, which aggregates five layers and writes `docs
 | Var | Used by | Default | Purpose |
 |---|---|---|---|
 | `CHAOS` | `local_validate.sh` | unset | When `=1`, run `chaos_full.sh` after the standard checks |
-| `PROVIDERS` | `stress_matrix.sh` | `rules openai-codex anthropic openai-compatible` | Whitespace-separated provider list to drive |
-| `OPENAI_API_KEY` | `stress_matrix.sh` (codex) | unset | Required for the `openai-codex` row |
+| `PROVIDERS` | `stress_matrix.sh` | `rules codex-cli anthropic openai-compatible` | Whitespace-separated provider list to drive |
+| `ROCM_DOCTOR_CODEX_BINARY` | `stress_matrix.sh` (codex-cli) | `codex` on PATH | Override Codex CLI binary path; row skips gracefully if missing |
+| `ROCM_DOCTOR_CODEX_MODEL` | `stress_matrix.sh` (codex-cli) | Codex's default | Override the model Codex CLI invokes (forwarded as `codex exec --model`) |
 | `ANTHROPIC_API_KEY` | `stress_matrix.sh` (anthropic) | unset | Required for the `anthropic` row |
 | `OPENROUTER_API_KEY` | `stress_matrix.sh` (openai-compatible) | unset | Required for the `openai-compatible` row |
 | `OLLAMA_BASE_URL` | `chaos_qwen.sh` | `http://127.0.0.1:11434/v1` | Upstream OpenAI-compatible base for the adversarial proxy |

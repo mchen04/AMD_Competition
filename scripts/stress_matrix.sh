@@ -5,14 +5,14 @@
 # the cartesian product of:
 #   - real-config injectable scenarios (real recipes should fire and heal)
 #   - safety/fake scenarios            (recipes should be rejected, not heal)
-# across a list of diagnosis providers (rules, openai-codex, anthropic,
+# across a list of diagnosis providers (rules, codex-cli, anthropic,
 # openai-compatible, ...).
 #
 # Output: a markdown results table and per-row JSON dumps under $OUT_DIR.
 #
 # Usage:
 #   PORT=8765 OUT_DIR=docs/stress-test-screens \
-#     PROVIDERS="rules openai-codex anthropic openai-compatible" \
+#     PROVIDERS="rules codex-cli anthropic openai-compatible" \
 #     scripts/stress_matrix.sh
 #
 # Requires: curl, jq.
@@ -22,7 +22,7 @@ set -euo pipefail
 PORT="${PORT:-8765}"
 HOST="${HOST:-127.0.0.1}"
 BASE="http://${HOST}:${PORT}"
-PROVIDERS="${PROVIDERS:-rules openai-codex anthropic openai-compatible}"
+PROVIDERS="${PROVIDERS:-rules codex-cli anthropic openai-compatible}"
 REAL_SCENARIOS="${REAL_SCENARIOS:-wrong_endpoint_port context_length_too_large tool_parser_mismatch missing_rocm_device_flags}"
 SAFETY_SCENARIOS="${SAFETY_SCENARIOS:-malformed_provider_output unknown_recipe unsafe_command path_traversal credential_modification}"
 OUT_DIR="${OUT_DIR:-docs/stress-test-screens}"

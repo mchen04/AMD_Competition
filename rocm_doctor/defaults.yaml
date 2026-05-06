@@ -22,6 +22,11 @@ diagnosis:
       model: gpt-5.3-codex
       model_env: ROCM_DOCTOR_OPENAI_MODEL
       timeout_seconds: 30.0
+    codex-cli:
+      binary: codex
+      model_env: ROCM_DOCTOR_CODEX_MODEL
+      sandbox: read-only
+      timeout_seconds: 90.0
     anthropic-messages:
       endpoint: https://api.anthropic.com/v1/messages
       api_key_env: ANTHROPIC_API_KEY

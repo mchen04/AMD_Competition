@@ -28,7 +28,7 @@
 2. Healthy check against fake endpoint or real `qwen3:0.6b`.
 3. Inject one controlled failure.
 4. Show diagnosis (rules brain) → highlight failure class.
-5. Optional: switch to an LLM brain (`openai-codex` / `anthropic` / `openai-compatible`) and show same evidence parsed.
+5. Optional: switch to an LLM brain (`codex-cli` / `anthropic` / `openai-compatible`) and show same evidence parsed.
 6. Run repair through deterministic recipe.
 7. Run verification.
 8. Open the incident report.

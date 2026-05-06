@@ -54,8 +54,8 @@ def test_model_provider_ids_cannot_contain_dots(tmp_path: Path) -> None:
         load_config(config_path)
 
 
-def test_openai_responses_provider_skips_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_anthropic_provider_skips_without_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     config = load_config("demo/rocm-doctor.yaml")
     evidence = EvidenceBundle(
         collected_at="2026-05-05T00:00:00Z",
@@ -67,10 +67,29 @@ def test_openai_responses_provider_skips_without_api_key(monkeypatch: pytest.Mon
         health=HealthCheckResult(healthy=True, checks={"endpoint_models": True}),
     )
 
-    diagnosis = diagnose_with_provider("openai-codex", evidence, config)
+    diagnosis = diagnose_with_provider("anthropic", evidence, config)
 
     assert diagnosis.failure_class == "provider_skipped"
-    assert "OPENAI_API_KEY is absent" in diagnosis.evidence[0]
+    assert "ANTHROPIC_API_KEY is absent" in diagnosis.evidence[0]
+
+
+def test_codex_cli_provider_skips_when_binary_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ROCM_DOCTOR_CODEX_BINARY", "/nonexistent/codex-binary-for-test")
+    config = load_config("demo/rocm-doctor.yaml")
+    evidence = EvidenceBundle(
+        collected_at="2026-05-05T00:00:00Z",
+        config_path="demo/rocm-doctor.yaml",
+        config_snapshot={},
+        endpoint={"models": {}, "chat": {}, "tool_call": {}},
+        runtime={},
+        logs=[],
+        health=HealthCheckResult(healthy=True, checks={"endpoint_models": True}),
+    )
+
+    diagnosis = diagnose_with_provider("codex-cli", evidence, config)
+
+    assert diagnosis.failure_class == "provider_skipped"
+    assert "binary not found" in diagnosis.evidence[0]
 
 
 def test_bad_template_rendering_is_reported(tmp_path: Path) -> None:

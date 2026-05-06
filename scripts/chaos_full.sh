@@ -4,7 +4,7 @@
 # Runs all five layers of the chaos suite and exits non-zero if any layer fails:
 #   1. Deterministic chaos pytests (no external services)
 #   2. Adversarial-proxy heal-cycle sweep against real Ollama (skip if unavailable)
-#   3. Two-brain stress matrix run (skip if dashboard or OPENAI_API_KEY missing)
+#   3. Two-brain stress matrix run (skip if dashboard or `codex` CLI missing)
 #   4. (this script — aggregator)
 #   5. Supervisor stability soak (Python, in-process)
 #
@@ -16,7 +16,7 @@
 # Env knobs:
 #   PYTHON_BIN      python interpreter (default: /tmp/rocm-doctor-venv/bin/python)
 #   STRESS_PORT     dashboard port for Layer 3 (default: 8765)
-#   STRESS_PROVIDERS  whitespace list passed as PROVIDERS (default: rules openai-codex)
+#   STRESS_PROVIDERS  whitespace list passed as PROVIDERS (default: rules codex-cli)
 #   CHAOS_CYCLES    supervisor cycle count (default: 100)
 #   OUT_DIR         where Layer 2/3 markdown lands (default: docs/stress-test-screens)
 
@@ -27,7 +27,7 @@ cd "$ROOT"
 
 PYTHON_BIN="${PYTHON_BIN:-/tmp/rocm-doctor-venv/bin/python}"
 STRESS_PORT="${STRESS_PORT:-8765}"
-STRESS_PROVIDERS="${STRESS_PROVIDERS:-rules openai-codex}"
+STRESS_PROVIDERS="${STRESS_PROVIDERS:-rules codex-cli}"
 CHAOS_CYCLES="${CHAOS_CYCLES:-100}"
 OUT_DIR="${OUT_DIR:-docs/stress-test-screens}"
 
@@ -82,7 +82,7 @@ fi
 # --- Layer 3: two-brain stress matrix -------------------------------------
 echo "chaos_full: Layer 3 — stress_matrix.sh"
 if curl -s -m 2 "http://127.0.0.1:${STRESS_PORT}/api/snapshot" >/dev/null 2>&1; then
-  if [ -n "${OPENAI_API_KEY:-}" ]; then
+  if command -v codex >/dev/null 2>&1; then
     if PORT="$STRESS_PORT" PROVIDERS="$STRESS_PROVIDERS" OUT_DIR="$OUT_DIR" \
          bash scripts/stress_matrix.sh >/tmp/chaos-l3.log 2>&1; then
       L3_STATUS="pass"
@@ -93,7 +93,7 @@ if curl -s -m 2 "http://127.0.0.1:${STRESS_PORT}/api/snapshot" >/dev/null 2>&1; 
     L3_DETAIL="providers=$STRESS_PROVIDERS · $(tail -n 2 /tmp/chaos-l3.log | tr '\n' '; ')"
   else
     L3_STATUS="skipped"
-    L3_DETAIL="OPENAI_API_KEY not set"
+    L3_DETAIL="codex CLI not installed"
   fi
 else
   L3_STATUS="skipped"

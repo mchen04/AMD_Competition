@@ -123,13 +123,12 @@ diagnosis:
     fake:
       type: fake
       mode: normal
-    openai-codex:
-      type: openai-responses
-      endpoint: https://api.openai.com/v1/responses
-      api_key_env: OPENAI_API_KEY
-      model: gpt-5.3-codex
-      model_env: ROCM_DOCTOR_OPENAI_MODEL
-      timeout_seconds: 30.0
+    codex-cli:
+      type: codex-cli
+      binary: codex
+      model_env: ROCM_DOCTOR_CODEX_MODEL
+      sandbox: read-only
+      timeout_seconds: 90.0
       retry:
         max_attempts: 1
         backoff_seconds: 0.0

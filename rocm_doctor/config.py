@@ -283,7 +283,7 @@ def _normalize_diagnosis(diagnosis: Any) -> dict[str, Any]:
         defaults_for_type = type_defaults.get(provider["type"]) or {}
         for key, default_value in defaults_for_type.items():
             provider.setdefault(key, deepcopy(default_value))
-        if provider["type"] in {"openai-responses", "anthropic-messages", "openai-chat-completions"}:
+        if provider["type"] in {"openai-responses", "anthropic-messages", "openai-chat-completions", "codex-cli"}:
             provider.setdefault("retry", {})
             for key, default_value in retry_defaults.items():
                 if key == "retry_status_codes":

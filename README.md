@@ -28,7 +28,7 @@ Web console (Vite/React, served by stdlib HTTP + SSE):
 /tmp/rocm-doctor-venv/bin/python -m rocm_doctor dashboard --port 8765
 ```
 
-Open `http://localhost:8765/`. The topbar exposes two pills — **active model provider** (which OpenAI-compatible runtime is being healed) and **diagnosis brain** (`rules`, `openai-codex`, `anthropic`, or `openai-compatible`). Brains whose API key env var is absent skip gracefully and the harness falls through. The dashboard binds against an isolated working copy at `<workspace>/.rocm-doctor.dashboard.yaml` and writes reports under `<workspace>/reports/dashboard/`; the template config is never mutated by clicks. `POST /api/reset` restores the working copy.
+Open `http://localhost:8765/`. The topbar exposes two pills — **active model provider** (which OpenAI-compatible runtime is being healed) and **diagnosis brain** (`rules`, `codex-cli`, `anthropic`, or `openai-compatible`). Brains whose API key env var (or, for `codex-cli`, the `codex` binary) is absent skip gracefully and the harness falls through. `codex-cli` shells out to a locally-installed [Codex CLI](https://github.com/openai/codex) — auth comes from `codex login` (ChatGPT subscription or Codex's own API key); ROCm Doctor never reads `OPENAI_API_KEY`. The dashboard binds against an isolated working copy at `<workspace>/.rocm-doctor.dashboard.yaml` and writes reports under `<workspace>/reports/dashboard/`; the template config is never mutated by clicks. `POST /api/reset` restores the working copy.
 
 When scripting browser tests, prefer `find text "<chip-label>" click` over `click @<ref>` — React 18's delegated event listener can ignore stale refs.
 
@@ -97,7 +97,7 @@ Five layers, aggregated into `docs/chaos-report-<date>.md`:
 
 1. **Deterministic chaos pytests** — randomized 50-round real/safety sweep, chained failures, learned-fix replay (`attempts == 1` after one priming run), recipe-sequence heal.
 2. **Adversarial-proxy sweep against real Ollama qwen3:0.6b** — all 16 `ADVERSARIAL_FAILURE_MODES` driven through detect → heal → verify. **5 modes heal** (`healthy`, `rate_limit_once`, `slow_response` → `increase_timeout`, `empty_chat_content_once` → `increase_health_max_tokens`, `stream_interrupt` → `disable_streaming`); **11 modes are detect-only by design** (`chat_500`, `models_500`, `rate_limit`, `chat_invalid_json`, `empty_response`, `partial_response`, `drop_connection`, `empty_chat_content`, `instruction_drift`, `hallucinated_tool_call`, `repetitive_output` — these inject *permanent* upstream failures that no config edit can recover from while the proxy is misbehaving). Layer fails if any expected-heal mode misses.
-3. **Two-brain stress matrix** — `PROVIDERS="rules openai-codex" scripts/stress_matrix.sh` walks providers × scenarios via the dashboard `/api/run`. Anthropic/OpenRouter excluded by default; add to `PROVIDERS` when keys are present.
+3. **Two-brain stress matrix** — `PROVIDERS="rules codex-cli" scripts/stress_matrix.sh` walks providers × scenarios via the dashboard `/api/run`. Anthropic/OpenRouter excluded by default; add to `PROVIDERS` when keys are present.
 4. **Aggregator** — `scripts/chaos_full.sh`, exits non-zero on any layer failure.
 5. **Supervisor stability soak** — `scripts/chaos_supervisor.py` runs 100 cycles of randomized real-scenario injection. Pass criteria: 100% heal rate, mean attempts ≤ 1.5 by round 50 (proves learned fixes save cycles).
 
