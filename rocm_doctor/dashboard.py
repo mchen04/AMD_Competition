@@ -106,18 +106,53 @@ def _provider_dto(pid: str, raw: dict[str, Any], active_id: str) -> dict[str, An
     }
 
 
-def _recipe_dto(recipe: Any) -> dict[str, Any]:
+def _recipe_dto(recipe: Any, config: dict[str, Any] | None = None) -> dict[str, Any]:
     risk_map = {"medium": "med"}
+    edit_path: str | None = None
+    edit_from: Any = None
+    edit_to: Any = None
+    if recipe.config_path_templates:
+        edit_path = recipe.config_path_templates[0]
+        if config is not None:
+            try:
+                changes = recipe.build_changes(config) or {}
+            except (KeyError, TypeError, ValueError):
+                changes = {}
+            resolved = recipe.config_paths(config)
+            primary = resolved[0] if resolved else edit_path
+            if primary in changes:
+                edit_to = changes[primary]
+                try:
+                    edit_from = _get_dotted(config, primary)
+                except KeyError:
+                    edit_from = None
     return {
         "id": recipe.id,
         "desc": _RECIPE_DESC.get(recipe.id, ""),
         "classes": list(recipe.supported_failure_classes),
         "risk": risk_map.get(recipe.risk_level, recipe.risk_level),
-        "editPath": recipe.config_path_templates[0] if recipe.config_path_templates else None,
-        "editFrom": None,
-        "editTo": None,
+        "editPath": edit_path,
+        "editFrom": _coerce_preview(edit_from),
+        "editTo": _coerce_preview(edit_to),
         "verifies": list(recipe.verification_steps) or ["full check sequence"],
     }
+
+
+def _coerce_preview(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return json.dumps(value, sort_keys=True)
+
+
+def _get_dotted(data: dict[str, Any], dotted_key: str) -> Any:
+    cursor: Any = data
+    for part in dotted_key.split("."):
+        if not isinstance(cursor, dict) or part not in cursor:
+            raise KeyError(dotted_key)
+        cursor = cursor[part]
+    return cursor
 
 
 def _failure_dto(entry: Any) -> dict[str, Any]:
@@ -190,12 +225,13 @@ class DashboardState:
 
     DURATION_HISTORY = 50
 
-    def __init__(self, template_config: Path) -> None:
+    def __init__(self, template_config: Path, diagnosis_provider: str = "rules") -> None:
         self.template_config = template_config.resolve()
         self.workspace = self.template_config.parent
         self.working_config = self.workspace / ".rocm-doctor.dashboard.yaml"
         self.state_file = ".rocm-doctor.dashboard-state.json"
         self.reports_subdir = "reports/dashboard"
+        self.diagnosis_provider = diagnosis_provider
         # In-memory rolling map of incident_id → duration in ms for runs
         # observed during this dashboard process. Older incidents on disk
         # carry no duration in their report files, so this is the cleanest
@@ -242,7 +278,7 @@ def _api_snapshot(state: DashboardState, _body: dict, _query: dict) -> dict:
     providers_raw = cfg.get("model_providers", {}) or {}
     providers = [_provider_dto(pid, raw, active) for pid, raw in providers_raw.items()]
 
-    recipes = [_recipe_dto(r) for r in RECIPE_REGISTRY.values()]
+    recipes = [_recipe_dto(r, cfg) for r in RECIPE_REGISTRY.values()]
     failures = [_failure_dto(f) for f in FAILURE_TAXONOMY.values()]
     known_failure_ids = {f["id"] for f in failures}
     for scenario in sorted(SCENARIOS):
@@ -258,6 +294,10 @@ def _api_snapshot(state: DashboardState, _body: dict, _query: dict) -> dict:
 
     yaml_text = state.working_config.read_text(encoding="utf-8")
 
+    diagnosis_cfg = cfg.get("diagnosis") or {}
+    diagnosis_providers_raw = diagnosis_cfg.get("providers") or {}
+    diagnosis_providers = sorted(diagnosis_providers_raw.keys())
+
     return {
         "config_path": str(state.working_config),
         "template_path": str(state.template_config),
@@ -270,6 +310,8 @@ def _api_snapshot(state: DashboardState, _body: dict, _query: dict) -> dict:
         "incidents": _list_incidents(state.reports_dir, dict(state.run_durations)),
         "state_json": state_json,
         "config_yaml": yaml_text,
+        "diagnosis_providers": diagnosis_providers,
+        "diagnosis_provider": state.diagnosis_provider,
     }
 
 
@@ -286,8 +328,17 @@ def _api_run(state: DashboardState, body: dict, _query: dict) -> dict:
             raise ValueError(f"unknown scenario: {scenario}")
         inject_result = inject_failure(state.working_config, scenario)
 
+    requested_provider = body.get("provider_name")
+    if requested_provider is not None and not isinstance(requested_provider, str):
+        raise ValueError("provider_name must be a string")
+    provider_name = (requested_provider or state.diagnosis_provider or "rules").strip() or "rules"
+    cfg_for_check = load_config(state.working_config)
+    available = (cfg_for_check.get("diagnosis", {}) or {}).get("providers", {}) or {}
+    if provider_name not in available:
+        raise ValueError(f"unknown diagnosis provider: {provider_name}")
+
     t0 = time.perf_counter()
-    result = self_heal_config(state.working_config, provider_name="rules")
+    result = self_heal_config(state.working_config, provider_name=provider_name)
 
     state_json: dict[str, Any] = {}
     if state.state_path.is_file():
@@ -317,6 +368,7 @@ def _api_run(state: DashboardState, body: dict, _query: dict) -> dict:
         "report_path": report_path,
         "incident_id": incident_id,
         "duration_ms": duration_ms,
+        "diagnosis_provider": provider_name,
         "incidents": _list_incidents(state.reports_dir, dict(state.run_durations)),
     }
 
@@ -436,6 +488,7 @@ def serve_forever(
     port: int = 8765,
     web_root: Path | None = None,
     config: Path | None = None,
+    diagnosis_provider: str = "rules",
 ) -> None:
     web = (web_root or DEFAULT_WEB_ROOT).resolve()
     if not (web / "index.html").is_file():
@@ -445,7 +498,7 @@ def serve_forever(
     if not template.is_file():
         raise FileNotFoundError(f"config template not found: {template}")
 
-    state = DashboardState(template)
+    state = DashboardState(template, diagnosis_provider=diagnosis_provider)
 
     handler_cls = type(
         "BoundDashboardHandler",

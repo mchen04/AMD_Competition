@@ -629,8 +629,18 @@ input, select, textarea { font-family: inherit; }
   font-family: var(--mono);
   font-size: 11px;
   margin-top: 4px;
+  min-width: 0;
+  overflow: hidden;
 }
-.diff-path { color: var(--text-2); margin-bottom: 4px; font-size: 10.5px; }
+.diff-path {
+  color: var(--text-2);
+  margin-bottom: 4px;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  white-space: normal;
+}
+.diff-line { overflow-wrap: anywhere; word-break: break-all; white-space: normal; }
 .diff-line.del { color: var(--err); }
 .diff-line.add { color: var(--ok); }
 .kv {
@@ -642,8 +652,16 @@ input, select, textarea { font-family: inherit; }
 }
 .kv dt { color: var(--text-2); font-family: var(--mono); font-size: 11px; }
 .kv dd { margin: 0; color: var(--text-0); font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; }
-.probe-row { padding: 6px 12px; font-size: 11.5px; }
-.probe-row .probe-name { font-size: 11.5px; }
+.probe-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.probe-row .probe-name { font-size: 11.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.probe-row .probe-time { font-family: var(--mono); font-size: 11px; color: var(--text-2); white-space: nowrap; }
 
 /* tabs */
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }

@@ -126,7 +126,7 @@ const LoopMini = ({ run }) => (
 /* ───────────────────────────────────────────────────────────────────── */
 /*  Healing Loop                                                          */
 /* ───────────────────────────────────────────────────────────────────── */
-const LoopPage = ({ providerId, presetFailure, presetRunKey, onComplete }) => {
+const LoopPage = ({ providerId, diagnosisProvider, presetFailure, presetRunKey, onComplete }) => {
   const initialFailure = (() => {
     if (presetFailure) return presetFailure;
     const firstScenario = (window.FAILURES || []).find(f => f.scenario);
@@ -184,8 +184,10 @@ const LoopPage = ({ providerId, presetFailure, presetRunKey, onComplete }) => {
 
     const failureMeta = (window.FAILURES || []).find(f => f.id === failureId);
     const scenario = failureMeta && failureMeta.scenario;
+    const selectedProvider = diagnosisProvider || window.SELECTED_DIAGNOSIS_PROVIDER || "rules";
     pushLog("cmd", `POST /api/run scenario=${scenario || "(none)"}`);
     pushLog("info", `active_model_provider = ${providerId}`);
+    pushLog("info", `diagnosis_provider = ${selectedProvider}`);
 
     setStep(0, { state: "active", detail: "POST /api/run" });
     if (!scenario) {
@@ -194,7 +196,7 @@ const LoopPage = ({ providerId, presetFailure, presetRunKey, onComplete }) => {
 
     let data;
     try {
-      data = await window.apiRun(scenario);
+      data = await window.apiRun(scenario, selectedProvider);
     } catch (err) {
       pushLog("err", `× /api/run failed: ${err.message}`);
       setSteps(st => st.map(x => ({ ...x, state: "fail", detail: "api error" })));
@@ -227,8 +229,8 @@ const LoopPage = ({ providerId, presetFailure, presetRunKey, onComplete }) => {
     pushLog("err", `× ${probeFailMsg}`);
 
     await sleep(160);
-    setStep(1, { state: "active", detail: "rules provider" });
-    pushLog("info", "→ diagnose: provider=rules");
+    setStep(1, { state: "active", detail: `${selectedProvider} provider` });
+    pushLog("info", `→ diagnose: provider=${selectedProvider}`);
     await sleep(180);
     setStep(1, { state: "done", detail: failureClass });
     pushLog("warn", `diagnosis: ${failureClass}${diag && diag.suspected_cause ? ` — ${diag.suspected_cause}` : ""}`);
@@ -631,8 +633,14 @@ const FailuresPage = ({ goToLoop }) => (
                 <Icon name="flask" size={14} color="var(--accent)" />
               </div>
               <div className="recipe-tags">
-                <span className="pill muted">→</span>
-                {f.candidates.map(c => <span key={c} className="pill info mono">{c}</span>)}
+                {f.candidates && f.candidates.length > 0 ? (
+                  <>
+                    <span className="pill muted">→</span>
+                    {f.candidates.map(c => <span key={c} className="pill info mono">{c}</span>)}
+                  </>
+                ) : (
+                  <span className="pill muted">injection-only · no candidate recipes</span>
+                )}
               </div>
               <div style={{ marginTop: "auto", display: "flex", justifyContent: "flex-end" }}>
                 <button className="btn primary" style={{ padding: "3px 10px", fontSize: 11.5 }}
@@ -809,35 +817,31 @@ const ConfigPage = () => {
           )}
           {tab === "snapshots" && (
             <div style={{ flex: 1, overflow: "auto" }}>
-              <table className="tbl">
-                <thead><tr><th>file</th><th>incident</th><th>recipe</th><th className="right">size</th></tr></thead>
-                <tbody>
-                  {window.INCIDENTS.slice(0, 5).map(i => (
-                    <tr key={i.id}>
-                      <td className="mono">{i.id}.snap.yaml</td>
-                      <td className="mono dim">{i.id}</td>
-                      <td className="mono"><span style={{ color: "var(--accent)" }}>{i.recipe}</span></td>
-                      <td className="right mono dim">{(3.4 + Math.random() * 0.5).toFixed(1)} KB</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {window.INCIDENTS && window.INCIDENTS.length > 0 ? (
+                <table className="tbl">
+                  <thead><tr><th>incident</th><th>recipe</th><th>outcome</th><th className="right">report bytes</th></tr></thead>
+                  <tbody>
+                    {window.INCIDENTS.map(i => (
+                      <tr key={i.id}>
+                        <td className="mono">{i.id}</td>
+                        <td className="mono">{i.recipe ? <span style={{ color: "var(--accent)" }}>{i.recipe}</span> : <span className="muted">—</span>}</td>
+                        <td className="mono dim">{i.outcome || "—"}</td>
+                        <td className="right mono dim">{i.size != null ? i.size.toLocaleString() : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="empty" style={{ padding: 24 }}>No incident reports yet — run a heal from the Healing Loop page.</div>
+              )}
             </div>
           )}
           {tab === "state" && (
-            <pre className="code" style={{ borderRadius: 0, border: "none", margin: 0, flex: 1, overflow: "auto" }}>{`{
-  "version": 1,
-  "learned_fixes": {
-    "fake-openai/wrong_endpoint_port":      "update_endpoint_url",
-    "fake-openai/context_length_too_large": "lower_max_model_len",
-    "fake-openai/tool_parser_mismatch":     "set_tool_parser",
-    "ollama-qwen3-0-6b/weak_model_overanswer": "tighten_expected_health_response"
-  },
-  "service_restart_counters": { "fake-vllm": 0, "ollama": 0 },
-  "last_known_good": {
-    "fake-openai": "state/snapshots/INC-2026-04-12-002.snap.yaml"
-  }
-}`}</pre>
+            <pre className="code" style={{ borderRadius: 0, border: "none", margin: 0, flex: 1, overflow: "auto" }}>
+              {window.STATE_JSON && Object.keys(window.STATE_JSON).length > 0
+                ? JSON.stringify(window.STATE_JSON, null, 2)
+                : "// state.json is empty — run a heal to populate learned_fixes, last-known-good snapshots, etc."}
+            </pre>
           )}
         </Panel>
       </div>

@@ -463,6 +463,12 @@ async function loadDashboardData() {
     window.ACTIVE_PROVIDER = data.active_provider || (data.providers[0] && data.providers[0].id);
     window.WORKING_CONFIG  = data.config_path;
     window.TEMPLATE_CONFIG = data.template_path;
+    window.DIAGNOSIS_PROVIDERS = data.diagnosis_providers || ["rules"];
+    if (!window.SELECTED_DIAGNOSIS_PROVIDER) {
+      window.SELECTED_DIAGNOSIS_PROVIDER = data.diagnosis_provider
+        || window.DIAGNOSIS_PROVIDERS[0]
+        || "rules";
+    }
     window.FAILURE_TAXONOMY = Object.fromEntries(
       (data.failures || []).map(f => [f.id, { description: f.description, candidates: f.candidates }])
     );
@@ -470,6 +476,8 @@ async function loadDashboardData() {
     return { ok: true, data };
   } catch (err) {
     window.API_AVAILABLE = false;
+    if (!window.DIAGNOSIS_PROVIDERS) window.DIAGNOSIS_PROVIDERS = ["rules"];
+    if (!window.SELECTED_DIAGNOSIS_PROVIDER) window.SELECTED_DIAGNOSIS_PROVIDER = "rules";
     return { ok: false, error: err };
   }
 }
@@ -477,7 +485,12 @@ async function loadDashboardData() {
 async function apiCheck()        { return _apiFetch("/api/check", { method: "POST", body: "{}" }); }
 async function apiReset()        { return _apiFetch("/api/reset", { method: "POST", body: "{}" }); }
 async function apiSetActive(id)  { return _apiFetch("/api/active-provider", { method: "POST", body: JSON.stringify({ provider_id: id }) }); }
-async function apiRun(scenario)  { return _apiFetch("/api/run", { method: "POST", body: JSON.stringify({ scenario: scenario || null }) }); }
+async function apiRun(scenario, providerName) {
+  const body = { scenario: scenario || null };
+  const name = providerName || window.SELECTED_DIAGNOSIS_PROVIDER;
+  if (name) body.provider_name = name;
+  return _apiFetch("/api/run", { method: "POST", body: JSON.stringify(body) });
+}
 async function apiIncident(id)   { return _apiFetch(`/api/incident?id=${encodeURIComponent(id)}`); }
 
 Object.assign(window, {

@@ -75,11 +75,25 @@ const Sidebar = ({ route, setRoute, providerCount, incidentCount, recipeCount })
 );
 
 /* ── Topbar ─────────────────────────────────────────────────────────── */
-const Topbar = ({ route, providerId, setProviderId, onCheck, onSelfHeal, onReset, bootStatus }) => {
-  const [open, setOpen] = useState(false);
+const Topbar = ({
+  route, providerId, setProviderId,
+  diagnosisProvider, setDiagnosisProvider, diagnosisProviders,
+  onCheck, onSelfHeal, onReset, bootStatus,
+}) => {
+  // Single state — which dropdown (if any) is open. Opening one closes the other.
+  const [openMenu, setOpenMenu] = useState(null); // null | "diagnose" | "model"
+  const open = openMenu === "model";
+  const diagOpen = openMenu === "diagnose";
   const ddRef = useRef(null);
+  const diagRef = useRef(null);
   useEffect(() => {
-    const onDoc = (e) => { if (ddRef.current && !ddRef.current.contains(e.target)) setOpen(false); };
+    const onDoc = (e) => {
+      if (
+        (ddRef.current && ddRef.current.contains(e.target)) ||
+        (diagRef.current && diagRef.current.contains(e.target))
+      ) return;
+      setOpenMenu(null);
+    };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
@@ -88,6 +102,9 @@ const Topbar = ({ route, providerId, setProviderId, onCheck, onSelfHeal, onReset
     overview: "Overview", loop: "Healing Loop", providers: "Providers",
     recipes: "Recipes", failures: "Failures", incidents: "Incidents", config: "Config",
   };
+
+  const diagList = diagnosisProviders && diagnosisProviders.length ? diagnosisProviders : ["rules"];
+  const diagId = diagnosisProvider || diagList[0];
 
   return (
     <header className="topbar">
@@ -98,8 +115,28 @@ const Topbar = ({ route, providerId, setProviderId, onCheck, onSelfHeal, onReset
       </div>
       <div className="topbar-spacer" />
 
+      <div ref={diagRef} style={{ position: "relative" }}>
+        <button className="provider-pill" onClick={() => setOpenMenu(m => m === "diagnose" ? null : "diagnose")} title={`diagnose: ${diagId}`}>
+          <Icon name="flask" size={11} />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>diagnose: {diagId}</span>
+          <span className="caret"><Icon name="chev" size={11}/></span>
+        </button>
+        {diagOpen && (
+          <div className="dd-menu">
+            {diagList.map(p => (
+              <div key={p}
+                   className={"dd-item" + (p === diagId ? " is-current" : "")}
+                   onClick={() => { if (typeof setDiagnosisProvider === "function") setDiagnosisProvider(p); setOpenMenu(null); }}>
+                <span><Icon name="flask" size={13} /></span>
+                <span>{p}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div ref={ddRef} style={{ position: "relative" }}>
-        <button className="provider-pill" onClick={() => setOpen(o => !o)} title={providerId}>
+        <button className="provider-pill" onClick={() => setOpenMenu(m => m === "model" ? null : "model")} title={providerId}>
           <Icon name="server" size={11} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{providerId}</span>
           <span className="caret"><Icon name="chev" size={11}/></span>
@@ -109,7 +146,7 @@ const Topbar = ({ route, providerId, setProviderId, onCheck, onSelfHeal, onReset
             {window.PROVIDERS.map(p => (
               <div key={p.id}
                    className={"dd-item" + (p.id === providerId ? " is-current" : "")}
-                   onClick={() => { setProviderId(p.id); setOpen(false); }}>
+                   onClick={() => { setProviderId(p.id); setOpenMenu(null); }}>
                 <span><Icon name="server" size={13} /></span>
                 <span>{p.id}</span>
                 <span className="meta">{p.runtime}</span>

@@ -75,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
                 port=args.port,
                 web_root=args.web_root,
                 config=args.config,
+                diagnosis_provider=args.diagnosis_provider,
             )
             return 0
     except (ConfigError, ProviderError, ValueError) as exc:
@@ -159,6 +160,15 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--port", type=int, default=8765)
     dashboard.add_argument("--web-root", type=Path, default=None, help="override the web/ directory served")
     dashboard.add_argument("--config", type=Path, default=None, help="path to the template config (default: demo/rocm-doctor.yaml)")
+    dashboard.add_argument(
+        "--diagnosis-provider",
+        default="rules",
+        help=(
+            "default diagnosis brain for /api/run; the UI can override per-request. "
+            "Built-in types: rules, fake, openai-responses, anthropic-messages, "
+            "openai-chat-completions (provider id from the YAML's diagnosis.providers map)"
+        ),
+    )
     return parser
 
 

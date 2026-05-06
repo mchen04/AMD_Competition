@@ -5,6 +5,10 @@ const { useState: useAppState, useEffect: useAppEffect } = React;
 const App = () => {
   const [route, setRoute] = useAppState("overview");
   const [providerId, setProviderId] = useAppState(window.PROVIDERS[0].id);
+  const [diagnosisProvider, setDiagnosisProvider] = useAppState(
+    window.SELECTED_DIAGNOSIS_PROVIDER || (window.DIAGNOSIS_PROVIDERS && window.DIAGNOSIS_PROVIDERS[0]) || "rules"
+  );
+  const [diagnosisProviders, setDiagnosisProviders] = useAppState(window.DIAGNOSIS_PROVIDERS || ["rules"]);
   const [bootStatus, setBootStatus] = useAppState("loading"); // "loading" | "live" | "static"
   const [bootError, setBootError] = useAppState(null);
   const [refreshKey, setRefreshKey] = useAppState(0);
@@ -12,10 +16,17 @@ const App = () => {
   const [presetFailure, setPresetFailure] = useAppState(null);
   const [presetRunKey, setPresetRunKey] = useAppState(0);
 
+  const onDiagnosisChange = (p) => {
+    setDiagnosisProvider(p);
+    window.SELECTED_DIAGNOSIS_PROVIDER = p;
+  };
+
   const refreshSnapshot = async () => {
     const r = await window.loadDashboardData();
     if (r.ok) {
       setProviderId(window.ACTIVE_PROVIDER || window.PROVIDERS[0].id);
+      setDiagnosisProviders(window.DIAGNOSIS_PROVIDERS || ["rules"]);
+      setDiagnosisProvider(window.SELECTED_DIAGNOSIS_PROVIDER || (window.DIAGNOSIS_PROVIDERS && window.DIAGNOSIS_PROVIDERS[0]) || "rules");
       setBootStatus("live");
       setRefreshKey(k => k + 1);
     }
@@ -27,6 +38,8 @@ const App = () => {
       const r = await window.loadDashboardData();
       if (r.ok) {
         setProviderId(window.ACTIVE_PROVIDER || window.PROVIDERS[0].id);
+        setDiagnosisProviders(window.DIAGNOSIS_PROVIDERS || ["rules"]);
+        setDiagnosisProvider(window.SELECTED_DIAGNOSIS_PROVIDER || (window.DIAGNOSIS_PROVIDERS && window.DIAGNOSIS_PROVIDERS[0]) || "rules");
         setBootStatus("live");
       } else {
         setBootStatus("static");
@@ -104,7 +117,7 @@ const App = () => {
 
   let page = null;
   if (route === "overview")       page = <OverviewPage  providerId={providerId} setRoute={setRoute} openHealRun={openHealRun} refreshKey={refreshKey} />;
-  else if (route === "loop")      page = <LoopPage      providerId={providerId} presetFailure={presetFailure} presetRunKey={presetRunKey} onComplete={refreshSnapshot} />;
+  else if (route === "loop")      page = <LoopPage      providerId={providerId} diagnosisProvider={diagnosisProvider} presetFailure={presetFailure} presetRunKey={presetRunKey} onComplete={refreshSnapshot} />;
   else if (route === "providers") page = <ProvidersPage providerId={providerId} setProviderId={onProviderSwitch} refreshKey={refreshKey} />;
   else if (route === "recipes")   page = <RecipesPage   refreshKey={refreshKey} />;
   else if (route === "failures")  page = <FailuresPage  goToLoop={goToLoop} refreshKey={refreshKey} />;
@@ -125,6 +138,9 @@ const App = () => {
         route={route}
         providerId={providerId}
         setProviderId={onProviderSwitch}
+        diagnosisProvider={diagnosisProvider}
+        setDiagnosisProvider={onDiagnosisChange}
+        diagnosisProviders={diagnosisProviders}
         onCheck={onTopbarCheck}
         onSelfHeal={onTopbarSelfHeal}
         onReset={onTopbarReset}

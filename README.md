@@ -38,6 +38,8 @@ Open the web console (static React app under `web/`, served by Python's stdlib H
 
 Then visit `http://localhost:8765/`. The console surfaces all 16 failure classes from `healing_policy.FAILURE_TAXONOMY` and the 17 recipes from `recipes.py`, and animates the `check → diagnose → heal → verify → report` loop for any injected failure.
 
+The dashboard topbar exposes two pills: the existing **active model provider** (which OpenAI-compatible runtime is being healed) and a new **diagnose** pill (which brain decides the diagnosis + repair plan). Switch the latter to swap between `rules` (deterministic local), `openai-codex` (OpenAI Responses), `anthropic` (Claude via Messages tool-use), or `openai-compatible` (any chat-completions endpoint — OpenRouter, vLLM, LM Studio, Together). The `--diagnosis-provider` flag on `python -m rocm_doctor dashboard` controls the boot default; per-request overrides come from the UI/API. Providers whose API key env var is missing are skipped gracefully and the harness falls through to the next attempt.
+
 The dashboard binds against an isolated working copy of the supplied template config (`<workspace>/.rocm-doctor.dashboard.yaml`) and writes incident reports under `<workspace>/reports/dashboard/`, so the template config and CLI state are never mutated by clicks in the UI. POST `/api/reset` restores the working copy from the template.
 
 When scripting browser tests (e.g. via `agent-browser`), prefer `find text "<chip-label>" click` or a direct `eval "(() => Array.from(document.querySelectorAll('.failure-grid .chip')).find(b => b.textContent.trim() === '<id>').click())()"` over `click @<ref>` — React 18's delegated event listener can ignore the `@ref` form when refs go stale across re-renders. Real human clicks are unaffected.
@@ -57,7 +59,7 @@ This creates or reuses `/tmp/rocm-doctor-venv`, runs compile and pytest checks, 
 - `rocm_doctor/transport.py`: shared HTTP transport, retries, rate-limit, timeout, JSON, and SSE streaming handling.
 - `rocm_doctor/adversarial_proxy.py`: real-backend proxy for injecting transport/protocol failures in front of local Qwen or another OpenAI-compatible runtime.
 - `rocm_doctor/templates.py`: strict Jinja template rendering.
-- `rocm_doctor/providers.py`: diagnosis/planning providers: `rules`, `fake`, optional `openai-codex`.
+- `rocm_doctor/providers.py`: diagnosis/planning providers: `rules`, `fake`, plus optional LLM brains: `openai-responses` (e.g. `openai-codex`), `anthropic-messages` (Claude), and `openai-chat-completions` (any OpenAI-compatible chat endpoint such as OpenRouter, vLLM, LM Studio, Together).
 - `rocm_doctor/healing_policy.py`: failure taxonomy, candidate-recipe ordering, and learned-fix lookup.
 - `rocm_doctor/recipes.py`: deterministic repair recipes and allowed config paths.
 - `rocm_doctor/executor.py`: safety gate for recipe execution.

@@ -16,3 +16,4 @@ demo/reports/
 demo/.rocm-doctor-state.json
 demo/.rocm-doctor.dashboard.yaml
 demo/.rocm-doctor.dashboard-state.json
+demo/.adversarial-proxy.yaml

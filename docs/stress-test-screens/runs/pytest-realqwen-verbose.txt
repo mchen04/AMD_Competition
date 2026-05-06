@@ -1,0 +1,28 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.4, pytest-9.0.3, pluggy-1.6.0 -- /private/tmp/rocm-doctor-venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/michaelchen/Downloads/AMD_Competition
+configfile: pyproject.toml
+collecting ... collected 19 items
+
+tests/test_real_qwen_adversarial.py::test_real_qwen_baseline_and_streaming_success PASSED [  5%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[models_500-HTTP 500-False] PASSED [ 10%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[chat_500-HTTP 500-False] PASSED [ 15%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[chat_invalid_json-invalid JSON response-False] PASSED [ 21%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[empty_response-invalid JSON response-False] PASSED [ 26%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[partial_response-invalid JSON response-False] PASSED [ 31%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[rate_limit-HTTP 429-False] PASSED [ 36%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[slow_response-timed out-False] PASSED [ 42%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[drop_connection-Remote end closed connection-False] PASSED [ 47%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[stream_interrupt-invalid streaming JSON chunk-True] PASSED [ 52%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[hallucinated_tool_call-hallucinated tool call-False] PASSED [ 57%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_adversarial_failures_are_detected[repetitive_output-repetitive output loop detected-False] PASSED [ 63%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_rate_limit_once_recovers_through_retry PASSED [ 68%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_self_heal_repairs_bad_endpoint_and_rechecks_model PASSED [ 73%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_failures_auto_heal_and_verify_on_model[empty_chat_content_once-config_kwargs0-increase_health_max_tokens-validation.health_max_tokens-512] PASSED [ 78%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_failures_auto_heal_and_verify_on_model[slow_response-config_kwargs1-increase_timeout-request.timeout_seconds-10.1] PASSED [ 84%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_proxy_failures_auto_heal_and_verify_on_model[stream_interrupt-config_kwargs2-disable_streaming-request.stream-False] PASSED [ 89%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_prompt_level_adversarial_outputs_are_rejected[/no_think\nReturn ROCM_DOCTOR_OK followed by the exact sentence EXTRA_TEXT_FOR_DRIFT.-expected health response] PASSED [ 94%]
+tests/test_real_qwen_adversarial.py::test_real_qwen_prompt_level_adversarial_outputs_are_rejected[/no_think\nOutput exactly this text and nothing else: loop loop loop loop loop loop loop loop loop loop loop loop-repetitive output loop detected] PASSED [100%]
+
+============================= 19 passed in 20.78s ==============================

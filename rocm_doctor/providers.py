@@ -439,6 +439,256 @@ class OpenAIResponsesProvider:
         return value
 
 
+class AnthropicProvider:
+    """Anthropic Messages API diagnosis brain.
+
+    Coerces schema-valid JSON via Anthropic's tool-use API: a single tool
+    whose ``input_schema`` is the same JSON Schema used by the OpenAI
+    Responses provider. Anthropic guarantees the model emits tool input
+    matching the declared schema, which gives us strict-equivalent
+    structured output without requiring a Responses-style ``json_schema``
+    response format.
+    """
+
+    DEFAULT_ENDPOINT = "https://api.anthropic.com/v1/messages"
+    DEFAULT_MODEL = "claude-sonnet-4-6"
+    DEFAULT_API_VERSION = "2023-06-01"
+    DEFAULT_MAX_TOKENS = 1024
+
+    def __init__(self, name: str, spec: dict[str, Any]) -> None:
+        self.name = name
+        self.spec = spec
+        env_name = str(spec.get("api_key_env") or "ANTHROPIC_API_KEY")
+        self.api_key = os.environ.get(env_name)
+        model_env = os.environ.get(str(spec.get("model_env", "")))
+        self.model = model_env or str(spec.get("model") or self.DEFAULT_MODEL)
+        if not self.api_key:
+            raise OptionalProviderUnavailable(f"{env_name} is absent")
+
+    def diagnose(self, evidence: EvidenceBundle, config: dict[str, Any]) -> DiagnosisResult:
+        payload = self._tool_request(
+            evidence,
+            "rocm_doctor_diagnosis",
+            DIAGNOSIS_JSON_SCHEMA,
+            self.spec["templates"]["diagnosis_system"],
+            {"evidence": to_jsonable(evidence), "known_recipes": sorted(RECIPE_REGISTRY)},
+        )
+        payload["provider"] = self.name
+        return DiagnosisResult.from_mapping(payload, provider=self.name)
+
+    def plan(self, diagnosis: DiagnosisResult, evidence: EvidenceBundle, config: dict[str, Any]) -> RepairPlan:
+        payload = self._tool_request(
+            evidence,
+            "rocm_doctor_repair_plan",
+            REPAIR_PLAN_JSON_SCHEMA,
+            self.spec["templates"]["repair_system"],
+            {
+                "diagnosis": to_jsonable(diagnosis),
+                "evidence": to_jsonable(evidence),
+                "provider": to_jsonable(get_active_profile(config)),
+                "health": to_jsonable(evidence.health),
+                "previous_attempts": load_state(evidence.config_path).get("self_heal_attempts", []),
+                "learned_fixes": load_state(evidence.config_path).get("learned_fixes", {}),
+                "config": to_jsonable(config),
+                "developer_repair_mode": bool(config.get("self_healing", {}).get("developer_repair_mode", False)),
+                "recipes": {
+                    recipe_id: {
+                        "config_paths": list(recipe.config_paths(config)),
+                        "risk_level": recipe.risk_level,
+                        "supported_failure_classes": list(recipe.supported_failure_classes),
+                    }
+                    for recipe_id, recipe in RECIPE_REGISTRY.items()
+                },
+            },
+        )
+        payload["provider"] = self.name
+        return RepairPlan.from_mapping(payload, provider=self.name)
+
+    def _tool_request(
+        self,
+        evidence: EvidenceBundle,
+        name: str,
+        schema: dict[str, Any],
+        template_ref: str,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            instructions = render_template(
+                evidence.config_path,
+                template_ref,
+                {"provider_name": self.name, "schema_name": name, "data": data},
+            )
+        except TemplateRenderError as exc:
+            raise ProviderError(str(exc)) from exc
+        body = {
+            "model": self.model,
+            "max_tokens": int(self.spec.get("max_tokens", self.DEFAULT_MAX_TOKENS)),
+            "system": instructions,
+            "tools": [
+                {
+                    "name": name,
+                    "description": "Return the structured ROCm Doctor result.",
+                    "input_schema": schema,
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": name},
+            "messages": [
+                {"role": "user", "content": json.dumps(data, sort_keys=True)},
+            ],
+        }
+        retry = _retry_from_spec(self.spec["retry"])
+        endpoint = str(self.spec.get("endpoint") or self.DEFAULT_ENDPOINT)
+        api_version = str(self.spec.get("api_version") or self.DEFAULT_API_VERSION)
+        result = request_json(
+            "POST",
+            endpoint,
+            payload=body,
+            timeout=float(self.spec["timeout_seconds"]),
+            retry=retry,
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": api_version,
+                "Content-Type": "application/json",
+            },
+        )
+        if not result.ok:
+            raise ProviderError(f"Anthropic Messages request failed: {result.error}: {result.raw or result.payload}")
+        value = _extract_anthropic_tool_input(result.payload, name)
+        if not isinstance(value, dict):
+            raise ProviderError("Anthropic provider returned non-object tool input")
+        return value
+
+
+class OpenAICompatibleDiagnosisProvider:
+    """Diagnosis brain over any OpenAI Chat Completions-compatible endpoint.
+
+    Targets servers that implement ``POST {base_url}/chat/completions`` —
+    OpenRouter, vLLM, LM Studio, Ollama's /v1, Together, etc. Uses
+    ``response_format={"type": "json_schema", ...}`` when ``json_schema``
+    capability is declared (default), and falls back to plain JSON parsing
+    of ``choices[0].message.content``.
+    """
+
+    DEFAULT_MODEL = "gpt-4o-mini"
+    DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
+    def __init__(self, name: str, spec: dict[str, Any]) -> None:
+        self.name = name
+        self.spec = spec
+        env_name = str(spec.get("api_key_env") or "OPENAI_API_KEY")
+        self.api_key = os.environ.get(env_name)
+        model_env = os.environ.get(str(spec.get("model_env", "")))
+        self.model = model_env or str(spec.get("model") or self.DEFAULT_MODEL)
+        # Allow public endpoints with no key (e.g. local vLLM / LM Studio).
+        require_api_key = bool(spec.get("require_api_key", True))
+        if require_api_key and not self.api_key:
+            raise OptionalProviderUnavailable(f"{env_name} is absent")
+
+    def diagnose(self, evidence: EvidenceBundle, config: dict[str, Any]) -> DiagnosisResult:
+        payload = self._chat_request(
+            evidence,
+            "rocm_doctor_diagnosis",
+            DIAGNOSIS_JSON_SCHEMA,
+            self.spec["templates"]["diagnosis_system"],
+            {"evidence": to_jsonable(evidence), "known_recipes": sorted(RECIPE_REGISTRY)},
+        )
+        payload["provider"] = self.name
+        return DiagnosisResult.from_mapping(payload, provider=self.name)
+
+    def plan(self, diagnosis: DiagnosisResult, evidence: EvidenceBundle, config: dict[str, Any]) -> RepairPlan:
+        payload = self._chat_request(
+            evidence,
+            "rocm_doctor_repair_plan",
+            REPAIR_PLAN_JSON_SCHEMA,
+            self.spec["templates"]["repair_system"],
+            {
+                "diagnosis": to_jsonable(diagnosis),
+                "evidence": to_jsonable(evidence),
+                "provider": to_jsonable(get_active_profile(config)),
+                "health": to_jsonable(evidence.health),
+                "previous_attempts": load_state(evidence.config_path).get("self_heal_attempts", []),
+                "learned_fixes": load_state(evidence.config_path).get("learned_fixes", {}),
+                "config": to_jsonable(config),
+                "developer_repair_mode": bool(config.get("self_healing", {}).get("developer_repair_mode", False)),
+                "recipes": {
+                    recipe_id: {
+                        "config_paths": list(recipe.config_paths(config)),
+                        "risk_level": recipe.risk_level,
+                        "supported_failure_classes": list(recipe.supported_failure_classes),
+                    }
+                    for recipe_id, recipe in RECIPE_REGISTRY.items()
+                },
+            },
+        )
+        payload["provider"] = self.name
+        return RepairPlan.from_mapping(payload, provider=self.name)
+
+    def _chat_request(
+        self,
+        evidence: EvidenceBundle,
+        name: str,
+        schema: dict[str, Any],
+        template_ref: str,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            instructions = render_template(
+                evidence.config_path,
+                template_ref,
+                {"provider_name": self.name, "schema_name": name, "data": data},
+            )
+        except TemplateRenderError as exc:
+            raise ProviderError(str(exc)) from exc
+        base_url = str(self.spec.get("base_url") or self.DEFAULT_BASE_URL).rstrip("/")
+        url = str(self.spec.get("endpoint") or f"{base_url}/chat/completions")
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": instructions},
+                {"role": "user", "content": json.dumps(data, sort_keys=True)},
+            ],
+        }
+        if bool(self.spec.get("supports_json_schema", True)):
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": name,
+                    "strict": True,
+                    "schema": schema,
+                },
+            }
+        elif bool(self.spec.get("supports_json_object", True)):
+            body["response_format"] = {"type": "json_object"}
+        max_tokens = self.spec.get("max_tokens")
+        if max_tokens is not None:
+            body["max_tokens"] = int(max_tokens)
+        extra_headers = self.spec.get("extra_headers") or {}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        for key, value in extra_headers.items():
+            headers[str(key)] = str(value)
+        retry = _retry_from_spec(self.spec["retry"])
+        result = request_json(
+            "POST",
+            url,
+            payload=body,
+            timeout=float(self.spec["timeout_seconds"]),
+            retry=retry,
+            headers=headers,
+        )
+        if not result.ok:
+            raise ProviderError(f"OpenAI-compatible request failed: {result.error}: {result.raw or result.payload}")
+        text = _extract_chat_completion_text(result.payload)
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ProviderError(f"OpenAI-compatible provider returned non-JSON content: {exc}") from exc
+        if not isinstance(value, dict):
+            raise ProviderError("OpenAI-compatible provider returned non-object JSON")
+        return value
+
+
 def get_provider(name: str, config: dict[str, Any]) -> Provider:
     try:
         spec = get_diagnosis_provider_config(config, name)
@@ -451,6 +701,10 @@ def get_provider(name: str, config: dict[str, Any]) -> Provider:
         return FakeProvider(name, spec)
     if provider_type == "openai-responses":
         return OpenAIResponsesProvider(name, spec)
+    if provider_type == "anthropic-messages":
+        return AnthropicProvider(name, spec)
+    if provider_type == "openai-chat-completions":
+        return OpenAICompatibleDiagnosisProvider(name, spec)
     raise ProviderError(f"unknown diagnosis provider type: {provider_type}")
 
 
@@ -491,6 +745,38 @@ def _retry_from_spec(spec: dict[str, Any]) -> RetryPolicy:
         retry_on_timeout=bool(spec["retry_on_timeout"]),
         retry_on_invalid_json=bool(spec["retry_on_invalid_json"]),
     )
+
+
+def _extract_anthropic_tool_input(payload: dict[str, Any], tool_name: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ProviderError("Anthropic payload was not a JSON object")
+    blocks = payload.get("content") or []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_use" and block.get("name") == tool_name:
+            value = block.get("input")
+            if isinstance(value, dict):
+                return value
+    raise ProviderError(f"Anthropic payload had no tool_use block for {tool_name}")
+
+
+def _extract_chat_completion_text(payload: dict[str, Any]) -> str:
+    if not isinstance(payload, dict):
+        raise ProviderError("OpenAI-compatible payload was not a JSON object")
+    choices = payload.get("choices") or []
+    if not choices:
+        raise ProviderError("OpenAI-compatible payload had no choices")
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        chunks = [str(part.get("text", "")) for part in content if isinstance(part, dict)]
+        text = "".join(chunks).strip()
+        if text:
+            return text
+    if isinstance(content, str) and content.strip():
+        return content
+    raise ProviderError("OpenAI-compatible payload had no message content")
 
 
 def _extract_output_text(payload: dict[str, Any]) -> str:
