@@ -1,14 +1,12 @@
-# Testing And AMD Readiness
+# Testing and AMD Readiness
 
-## Test Coverage
-
-Run the complete no-AMD validation gate:
+## Validation Gate
 
 ```bash
 scripts/local_validate.sh
 ```
 
-This creates or reuses `/tmp/rocm-doctor-venv`, installs the package with test dependencies, runs compile and pytest checks, exercises the fake-endpoint demo on a copied config, writes an incident report, and runs the optional real-Qwen suite when Ollama is serving `qwen3:0.6b`.
+Creates/reuses `/tmp/rocm-doctor-venv`, installs `'.[test]'`, runs `compileall` + `pytest`, exercises the fake-endpoint demo on a copied config, generates a report, and runs the real-Qwen suite when Ollama is serving `qwen3:0.6b`.
 
 Manual equivalent:
 
@@ -19,32 +17,26 @@ python3 -m venv /tmp/rocm-doctor-venv
 /tmp/rocm-doctor-venv/bin/python -m pytest -q
 ```
 
-Latest local validation without AMD credits:
+Latest local status (no AMD credits): deterministic suite passes, real-Qwen suite passes, fake-endpoint demo + report path passes. AMD MI300X/vLLM path pending GPU credits.
 
-- Deterministic suite: `40 passed, 19 skipped`.
-- Real local Qwen suite: `19 passed`.
-- Fake endpoint demo/report path: passed.
-- AMD MI300X/vLLM path: not run because GPU credits are unavailable.
+## Coverage
 
-The default pytest suite uses a real in-process HTTP endpoint rather than mocked-only provider calls. It exercises the same OpenAI-compatible adapter path for:
+The pytest suite uses real in-process HTTP, not mocks, against the OpenAI-compatible adapter for `qwen3:0.6b`, `smollm2:135m`, `tinyllama:1.1b`.
 
-- `qwen3:0.6b`
-- `smollm2:135m`
-- `tinyllama:1.1b`
+**Failure modes covered:** malformed JSON, empty response, empty chat content, partial response, HTTP 500, HTTP 429 (one-time + repeated), timeout, retry recovery, retry exhaustion, context-length failure, tool-call parser mismatch, wrong tool name, hallucinated tool call, instruction drift, streaming interruption, repetitive output, corrupted state, invalid config, bad template, unknown recipe, unsafe command, path traversal, credential edit.
 
-Covered failure classes include malformed JSON, empty responses, empty model content, partial responses, HTTP 500, HTTP 429, one-time rate limits, repeated rate limits, timeout, retry recovery, retry exhaustion, context-length failure, tool-call parser mismatch, wrong tool-call name, hallucinated tool calls, instruction drift, streaming interruption, repetitive output loops, corrupted state, invalid config, bad template rendering, unknown recipes, unsafe commands, path traversal, and credential edits.
+**Self-heal flows asserted end-to-end:** retry-only recovery, `health_max_tokens` tuning, timeout tuning, streaming disablement, prompt-template fallback, fallback-provider switching, rollback after failed repair, learned-fix state recording.
 
-The deterministic self-healing tests assert full detect-heal-verify behavior for retry-only recovery, `health_max_tokens` tuning, timeout tuning, streaming disablement, prompt-template fallback, fallback-provider switching, rollback after failed repairs, and learned-fix state recording.
+**Report path:** generated reports include diagnosis, repair recipe, verification status, before/after evidence.
 
-The report path is covered as part of local validation. After `self-heal`, generated reports include diagnosis, repair recipe, verification status, and before/after evidence.
-
-The optional real-Qwen suite puts an adversarial proxy in front of local Ollama. Healthy requests are forwarded to `qwen3:0.6b`; transport/protocol failures are injected at the proxy boundary; prompt-level adversarial probes are answered by Qwen itself.
-
-When enabled, the real-Qwen suite also runs healing loops for empty chat content, slow responses, broken streaming, and bad endpoint recovery, then verifies the final health check against the actual local Qwen model.
+## Real-Qwen Adversarial Suite
 
 ```bash
-ROCM_DOCTOR_RUN_REAL_QWEN=1 /tmp/rocm-doctor-venv/bin/python -m pytest tests/test_real_qwen_adversarial.py -q -s
+ROCM_DOCTOR_RUN_REAL_QWEN=1 \
+  /tmp/rocm-doctor-venv/bin/python -m pytest tests/test_real_qwen_adversarial.py -q -s
 ```
+
+Adversarial proxy fronts local Ollama. Healthy requests forward to `qwen3:0.6b`; transport/protocol failures inject at the proxy boundary; prompt-level probes are answered by the real model. Healing loops covered: empty chat content, slow response, broken streaming, bad endpoint recovery.
 
 The proxy can also be run manually:
 
@@ -54,47 +46,39 @@ The proxy can also be run manually:
   --failure-mode chat_invalid_json
 ```
 
-## Tiny-Model Tuning
+## Tiny-Model Behavior
 
-For constrained models:
+`demo/ollama-tiny-models.yaml` ships profiles for `qwen3:0.6b`, `smollm2:135m`, `tinyllama:1.1b`. Switch `active_model_provider` to test each.
 
-- Keep health prompts short and exact.
-- Disable native tool-call checks unless the runtime reliably supports them.
+| Model | Behavior |
+|---|---|
+| `qwen3:0.6b` | Passes direct health checks and the real-Qwen adversarial suite. |
+| `smollm2:135m` | Reachable; fails strict health by returning long explanatory text instead of `ROCM_DOCTOR_OK`. |
+| `tinyllama:1.1b` | Reachable; fails strict health by returning prose around the sentinel. |
+
+The two smaller profiles are negative controls — evidence that the harness rejects weak instruction-following instead of accepting any response containing the sentinel.
+
+### Tiny-Model Tuning
+
+- Keep health prompts short and exact; keep `temperature: 0` in adapter probes.
+- Disable native tool-call checks unless the runtime emits them reliably.
 - Use smaller `model.context.max_tokens` and conservative `safe_max_tokens`.
-- Tune `validation.health_max_tokens`; local Qwen needed a larger budget because Ollama reported reasoning separately before final content.
-- Keep `validation.expected_health_response` configured and use `health_response_match: case_insensitive` for Qwen-style casing drift.
-- Configure `templates.health_chat_fallbacks` so drift, loops, empty output, or bad templates can switch to a stricter prompt without Python edits.
-- Increase `request.timeout_seconds` for local CPU-bound Ollama runs.
-- Set `request.stream: false` automatically when streaming is the failing path and non-streaming health checks still work.
-- Keep `temperature: 0` in adapter probes.
+- Tune `validation.health_max_tokens` (Qwen needs more headroom because Ollama reports reasoning separately).
+- Set `validation.health_response_match: case_insensitive` for Qwen casing drift.
+- Configure `templates.health_chat_fallbacks` so drift/loops/empty-output can switch prompts without Python edits.
+- Increase `request.timeout_seconds` for CPU-bound Ollama runs.
 - Use repeated-output and max-response validation to catch weak reasoning loops.
 
-## Optional Real Ollama Validation
-
-The deterministic suite validates the provider path without requiring model downloads. To validate real local models, start Ollama and activate the provider in `demo/ollama-tiny-models.yaml`.
-
-```bash
-ollama pull qwen3:0.6b
-ollama pull smollm2:135m
-ollama pull tinyllama:1.1b
-/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check --config demo/ollama-tiny-models.yaml
-```
-
-Switch `active_model_provider` to test each configured tiny model.
-
-Observed local behavior:
-
-- `qwen3:0.6b` passes direct health checks and the real-Qwen adversarial suite.
-- `smollm2:135m` and `tinyllama:1.1b` are reachable but fail strict health validation by over-answering. Minimal sentinel prompts and existing self-heal prompt fallbacks do not currently recover them, so treat them as weak-model rejection evidence rather than submission blockers.
+If a weak model fails with overlong output, treat it as a failed provider profile rather than relaxing validation.
 
 ## AMD Hooks
 
-AMD deployment assumptions are YAML-controlled:
+Everything AMD-specific is YAML-controlled:
 
-- `hardware.backend`, `hardware.accelerator`, `hardware.runtime`, `hardware.amd.benchmark_profile`
-- `launch.device_flags` and `launch.required_device_flags`
+- `hardware.{backend, accelerator, runtime}`, `hardware.amd.benchmark_profile`
+- `launch.{device_flags, required_device_flags}`
 - `model_providers.<id>.runtime_type`
 - endpoint URL, context limits, request timeout, retry policy, streaming flag
 - safe repair recipes and health probes
 
-Remaining AMD work is real MI300X/vLLM validation: add a `model_providers` entry for the deployed vLLM endpoint, set ROCm device flags, tune context for the selected model, and run the existing stress/failure suite against that provider.
+Remaining work is real MI300X/vLLM validation: add a `model_providers` entry pointing at the deployed vLLM endpoint, set ROCm device flags, tune context for the served model, run the same scenarios listed in [demo-runbook.md](demo-runbook.md). See [amd-developer-cloud-setup.md](amd-developer-cloud-setup.md) for droplet setup.

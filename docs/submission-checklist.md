@@ -1,50 +1,47 @@
 # Submission Checklist
 
-Use this as the lablab submission prep list.
+## Metadata
 
-## Project Metadata
-
-- Title: `ROCm Doctor`
-- Short description: `An agentic self-healing harness that detects, diagnoses, repairs, and verifies failures in AI agent deployments running on AMD Developer Cloud.`
-- Track: AI Agents and Agentic Workflows
-- Team members confirmed on lablab
-- Discord connected for the teammate who submits
+- **Title:** ROCm Doctor
+- **Description:** Self-healing supervisor for self-hosted, OpenAI-compatible model endpoints on AMD Developer Cloud.
+- **Track:** AI Agents and Agentic Workflows
 
 ## Required Links
 
 - Public GitHub repo
-- Demo URL or clear setup instructions
-- Demo video
-- Optional slide deck
-- Optional final incident report artifact
+- Demo URL or setup instructions
+- Demo video (≤3 min)
+- Optional: slide deck, final incident report
 
 ## Repo Readiness
 
-- Root README explains the project in under one minute.
-- `docs/` contains setup, demo, and submission docs.
-- Local demo can run without AMD GPU credits.
-- `scripts/local_validate.sh` passes before recording or submitting.
-- AMD cloud setup is documented separately.
-- Failure injection scripts are repeatable.
-- Generated reports are saved under a predictable folder and include diagnosis, repair, verification, and before/after evidence.
+- [ ] Top-level README explains the project in under one minute.
+- [ ] `scripts/local_validate.sh` passes.
+- [ ] `docs/` describes setup, demo, architecture, testing.
+- [ ] Local demo runs without AMD credits.
+- [ ] Failure injection scenarios are repeatable from CLI and dashboard.
+- [ ] Reports include diagnosis, repair, verification, and before/after evidence.
 
 ## Demo Video Outline
 
-1. Show ROCm Doctor project title and one-sentence purpose.
-2. Show the no-AMD local validation path or a healthy model/agent check.
+1. Title + one-sentence purpose.
+2. Healthy check against fake endpoint or real `qwen3:0.6b`.
 3. Inject one controlled failure.
-4. Run diagnosis and highlight the root cause.
-5. If available, show the same evidence through the optional Codex/OpenAI provider.
-6. Run repair through deterministic recipes.
+4. Show diagnosis (rules brain) → highlight failure class.
+5. Optional: switch to an LLM brain (`openai-codex` / `anthropic` / `openai-compatible`) and show same evidence parsed.
+6. Run repair through deterministic recipe.
 7. Run verification.
-8. Show the incident report.
-9. Close with why AMD Developer Cloud matters for the project.
+8. Open the incident report.
+9. Close on AMD MI300X evidence (or state explicitly that local Qwen + fake endpoint validated, MI300X pending credits).
 
-## Final Polish
+## Key Talking Points
 
-- Include screenshots of AMD Developer Cloud / MI300X evidence if available.
-- If AMD credits are unavailable, say explicitly that local fake-endpoint and real local Qwen validation passed, while MI300X/vLLM remains the final cloud proof.
-- Keep the video under three minutes unless rules allow more.
-- Make the final report readable in plain English.
-- Mention that the project targets real ROCm/vLLM deployment failure modes, not toy chatbot behavior.
-- Make clear that diagnosis providers can classify and plan, while the harness controls execution and verification.
+- Diagnosis is pluggable; repair execution is not.
+- 18 audited recipes, 13 failure classes, allowlisted YAML edits only.
+- LLM brains can sequence recipes or emit bounded patches; executor still rejects unsafe paths/types/credentials.
+- Adversarial proxy injects 16 transport/protocol failures against a real backend.
+- Learned-fixes memory keys repeat incidents to known-good recipes.
+
+## If AMD Credits Are Unavailable
+
+State explicitly in the submission: local fake-endpoint demo, real local Qwen adversarial suite, and multi-brain stress test (see [stress-test-report-2026-05-06.md](stress-test-report-2026-05-06.md)) all pass. MI300X/vLLM remains the final cloud proof.

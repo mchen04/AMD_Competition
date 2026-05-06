@@ -1,13 +1,8 @@
-# ROCm Doctor Docs
+# Docs
 
-Start with:
-
-- [Demo Runbook](demo-runbook.md): concise local demo flow and the `scripts/local_validate.sh` no-AMD validation gate.
-- [Testing And AMD Readiness](testing-and-amd-readiness.md): stress coverage, local validation results, tiny-model tuning, real Ollama checks, and AMD deployment hooks.
-- [Provider Architecture](provider-architecture.md): model-provider adapters, diagnosis providers, config, templates, and extension points.
-- [Local Tiny Model Testing](local-tiny-model-testing.md): optional Ollama/Qwen checks and weak-model rejection behavior.
-- [AMD Developer Cloud Setup](amd-developer-cloud-setup.md): cloud setup and cost controls.
-- [AMD Cloud Validation Plan](amd-cloud-validation-plan.md): concrete MI300X/vLLM model validation, failure injection, self-heal, and evidence plan.
-- [Submission Checklist](submission-checklist.md): hackathon submission checklist.
-
-Archived or prompt-style planning docs were removed from the active index because they no longer describe the current implementation.
+- [demo-runbook.md](demo-runbook.md) — local demo, AMD scenarios, dashboard
+- [provider-architecture.md](provider-architecture.md) — model & diagnosis providers, recipes, templates, executor
+- [testing-and-amd-readiness.md](testing-and-amd-readiness.md) — `local_validate.sh`, pytest coverage, real-Qwen adversarial suite, tiny-model behavior
+- [amd-developer-cloud-setup.md](amd-developer-cloud-setup.md) — MI300X droplet setup and config hooks
+- [submission-checklist.md](submission-checklist.md) — hackathon submission prep
+- [stress-test-report-2026-05-06.md](stress-test-report-2026-05-06.md) — multi-brain stress evidence (dated artifact)

@@ -1,56 +1,24 @@
 # AMD Developer Cloud Setup
 
-This guide is for the AMD Developer Cloud console hosted on DigitalOcean.
+GPU droplet setup on AMD Developer Cloud / DigitalOcean. Run the local validation gate (`scripts/local_validate.sh`) before spending GPU time.
 
-## Current State
+## Before Creating a Droplet
 
-- AMD AI Developer Program account exists.
-- AMD Developer Cloud / DigitalOcean console is reachable.
-- Cloud credit request has been submitted.
-- Project shown in the console: `My AMD Team`.
+1. Verify AMD credits visible in **Billing** / **My AMD Home**.
+2. Add SSH key to the DigitalOcean account.
+3. Confirm the local loop works: `scripts/local_validate.sh`.
 
-Do not create a GPU Droplet until credits are visible or the team deliberately decides to pay out of pocket.
+## Droplet Settings
 
-## Before Creating A GPU Droplet
+- **Plan:** `gpu-mi300x1-192gb` (1× MI300X, 192 GB GPU mem, 240 GiB RAM, 20 vCPU, 720 GiB disk).
+- **Image:** AMD AI/ML-ready (Ubuntu 24.04 + ROCm) or **ROCm-enabled GPT-OSS 120b** image.
+- **Auth:** SSH key only.
+- **Backups:** off for first pass.
+- **Name:** `rocm-doctor-demo`.
 
-1. Open **Settings** in the AMD/DigitalOcean project.
-2. Complete the **Action Needed** item by updating project information.
-3. Open **Billing** or **My AMD Home** and verify that AMD credits are visible.
-4. Add an SSH key to the DigitalOcean account.
-5. Confirm the local ROCm Doctor demo loop works without a GPU by running:
-
-```bash
-scripts/local_validate.sh
-```
-
-The local gate should prove:
-
-- health check fails/passes deterministically
-- diagnosis returns a specific failure class
-- deterministic repair is applied
-- verification reruns
-- incident report includes diagnosis, repair, verification, and before/after evidence
-
-## Create The GPU Droplet
-
-Use the smallest useful AMD GPU instance for the hackathon proof.
-
-Recommended settings:
-
-- Product: **GPU Droplet**
-- GPU plan: **1x AMD Instinct MI300X**
-- Avoid: 8x GPU plan unless there is a specific multi-GPU requirement
-- Image: AMD **AI/ML-ready image** if available
-- SSH: use key auth
-- Name: `rocm-doctor-demo`
-- Backups: off for the first validation pass
-- Extra storage: avoid unless needed
-
-DigitalOcean's current docs list the self-serve MI300X size as `gpu-mi300x1-192gb`, with 192 GB GPU memory, 240 GiB Droplet memory, 20 vCPUs, and a 720 GiB boot disk. Their AMD AI/ML-ready image is based on Ubuntu 24.04 and includes ROCm packages.
+Avoid the 8× MI300X plan unless a benchmark needs multi-GPU.
 
 ## First SSH Checks
-
-After the VM is created, SSH into it and verify the ROCm stack before installing project code.
 
 ```bash
 rocminfo | head
@@ -59,46 +27,85 @@ python3 --version
 docker --version
 ```
 
-If GPU visibility fails, collect the command output and do not spend time installing the app yet.
+If GPU isn't visible, capture the output and stop. Don't install the harness yet.
 
-## VM Usage Discipline
+## Find or Start vLLM
 
-GPU Droplets bill until destroyed. Powering off is not enough because the disk, CPU, RAM, and IP remain reserved.
+Check for a pre-started endpoint:
 
-Working pattern:
+```bash
+ss -ltnp | grep ':8000' || true
+curl -sS http://127.0.0.1:8000/v1/models | head
+```
 
-1. Create the GPU Droplet only for an active validation window.
-2. Clone the repo and run the GPU smoke checks.
-3. Validate the vLLM endpoint and ROCm Doctor repair loop.
-4. Save logs, screenshots, and reports back to git or local storage.
-5. Destroy the GPU Droplet when the run is done.
+If none exists, start vLLM manually:
 
-## AMD Proof Goal
+```bash
+MODEL_ID=openai/gpt-oss-120b   # fallback: openai/gpt-oss-20b
+python3 -m vllm.entrypoints.openai.api_server \
+  --model "${MODEL_ID}" --host 0.0.0.0 --port 8000 --max-model-len 4096
+```
 
-The cloud VM only needs to prove the AMD-specific path:
+Verify:
 
-- vLLM can serve an OpenAI-compatible endpoint on MI300X/ROCm.
-- ROCm Doctor can inspect the endpoint/runtime state.
-- At least one failure diagnosis uses real ROCm/vLLM evidence.
-- The report clearly shows the system running on AMD Developer Cloud.
+```bash
+curl -sS http://127.0.0.1:8000/v1/models
+curl -sS http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"'"${MODEL_ID}"'","messages":[{"role":"user","content":"Return exactly ROCM_DOCTOR_OK"}],"temperature":0,"max_tokens":32}'
+```
 
-The broader check/diagnose/heal/report loop should be developed locally before spending GPU time.
+## Install ROCm Doctor
 
-## ROCm Doctor Config Hooks
+```bash
+git clone https://github.com/mchen04/AMD_Competition.git
+cd AMD_Competition
+python3 -m venv /tmp/rocm-doctor-venv
+/tmp/rocm-doctor-venv/bin/python -m pip install -e '.[test]'
+```
 
-Add an AMD/vLLM entry under `model_providers` instead of editing core code. Set:
+## Configure the AMD Provider
 
+```bash
+cp demo/amd-vllm-template.yaml /tmp/rocm-doctor-amd.yaml
+```
+
+Edit `/tmp/rocm-doctor-amd.yaml`:
+
+- `model.id` — actual id from `/v1/models`
+- `model.endpoint.base_url` — `http://127.0.0.1:8000/v1`
+- `model.endpoint.expected_base_url` — same as `base_url`
+- `model.endpoint.wrong_base_url` — `http://127.0.0.1:8001/v1`
+- `model.context.max_tokens: 4096`, `safe_max_tokens: 8192`
+- `request.timeout_seconds: 30.0` if responses are slow
+- `model.tool_calling.enabled: false` if the model/image doesn't expose tool calls cleanly
 - `runtime_type: amd-vllm`
-- OpenAI-compatible vLLM `model.endpoint.base_url`
-- model id and context limits for the served model
 - `capabilities.rocm_device_flags: true`
 - `launch.required_device_flags: ["/dev/kfd", "/dev/dri"]`
-- conservative timeout and retry settings for the remote endpoint
-- AMD benchmark metadata under `hardware.amd`
+
+## Run the Demo
+
+See [demo-runbook.md](demo-runbook.md) for the full scenario list. Minimum proof:
+
+```bash
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check        --config /tmp/rocm-doctor-amd.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor inject-failure wrong_endpoint_port --config /tmp/rocm-doctor-amd.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor self-heal    --provider rules --config /tmp/rocm-doctor-amd.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor verify       --config /tmp/rocm-doctor-amd.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor report       --config /tmp/rocm-doctor-amd.yaml
+```
+
+## Cost Discipline
+
+GPU droplets bill until **destroyed** — power-off doesn't free the resources. Pattern:
+
+1. Create the droplet only for an active validation window.
+2. Run smoke checks → validate vLLM → run ROCm Doctor scenarios → save logs/screenshots/reports.
+3. Destroy the droplet.
+
+Destroy if: GPU not visible after first SSH checks; vLLM can't serve either model in the planned window; the healthy check + at least one self-heal report are saved; the validation session is over.
 
 ## References
 
 - AMD Developer Cloud: https://www.amd.com/en/developer/resources/cloud-access/amd-developer-cloud.html
-- AMD getting started guide: https://www.amd.com/en/developer/resources/technical-articles/2025/how-to-get-started-on-the-amd-developer-cloud-.html
 - DigitalOcean GPU Droplets: https://docs.digitalocean.com/products/gpu-droplets/
-- DigitalOcean GPU setup: https://docs.digitalocean.com/products/droplets/getting-started/recommended-gpu-setup/

@@ -1,119 +1,92 @@
 # ROCm Doctor
 
-ROCm Doctor is a self-healing harness for model-serving and agent runtimes. It checks an OpenAI-compatible endpoint, diagnoses failures, applies only deterministic repair recipes, verifies recovery, rolls back failed repairs, and writes incident evidence.
+Self-healing supervisor for self-hosted, OpenAI-compatible model endpoints (vLLM on AMD MI300X, Ollama, any chat-completions server). It runs `check → diagnose → heal → verify → report` in a bounded loop, applies only deterministic config repairs, and rolls back anything that doesn't recover the endpoint.
 
-The codebase is model-agnostic and provider-agnostic: model runtime details live in YAML under `model_providers`, prompt text lives in Jinja templates, and Python code talks to providers through adapters.
+Diagnosis is pluggable (rules engine or any of three LLM brains). Repair execution is not — every fix maps to one of 18 audited recipes that can only edit allowlisted YAML paths.
 
 ## Quick Start
-
-Install dependencies in a virtual environment:
 
 ```bash
 python3 -m venv /tmp/rocm-doctor-venv
 /tmp/rocm-doctor-venv/bin/python -m pip install -e '.[test]'
-```
 
-Run the local deterministic endpoint in one terminal:
-
-```bash
+# Terminal 1: deterministic local endpoint
 /tmp/rocm-doctor-venv/bin/python -m rocm_doctor fake-endpoint --port 8000
-```
 
-Run the harness in another terminal:
-
-```bash
-/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check --config demo/rocm-doctor.yaml
+# Terminal 2: the loop
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check        --config demo/rocm-doctor.yaml
 /tmp/rocm-doctor-venv/bin/python -m rocm_doctor inject-failure wrong_endpoint_port --config demo/rocm-doctor.yaml
-/tmp/rocm-doctor-venv/bin/python -m rocm_doctor self-heal --provider rules --config demo/rocm-doctor.yaml
-/tmp/rocm-doctor-venv/bin/python -m rocm_doctor report --config demo/rocm-doctor.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor self-heal    --config demo/rocm-doctor.yaml
+/tmp/rocm-doctor-venv/bin/python -m rocm_doctor report       --config demo/rocm-doctor.yaml
 ```
 
 Use a copy of the demo config when you want to mutate it repeatedly.
 
-Open the web console (static React app under `web/`, served by Python's stdlib HTTP server):
+Web console (Vite/React, served by stdlib HTTP + SSE):
 
 ```bash
 /tmp/rocm-doctor-venv/bin/python -m rocm_doctor dashboard --port 8765
 ```
 
-Then visit `http://localhost:8765/`. The console surfaces all 16 failure classes from `healing_policy.FAILURE_TAXONOMY` and the 17 recipes from `recipes.py`, and animates the `check → diagnose → heal → verify → report` loop for any injected failure.
+Open `http://localhost:8765/`. The topbar exposes two pills — **active model provider** (which OpenAI-compatible runtime is being healed) and **diagnosis brain** (`rules`, `openai-codex`, `anthropic`, or `openai-compatible`). Brains whose API key env var is absent skip gracefully and the harness falls through. The dashboard binds against an isolated working copy at `<workspace>/.rocm-doctor.dashboard.yaml` and writes reports under `<workspace>/reports/dashboard/`; the template config is never mutated by clicks. `POST /api/reset` restores the working copy.
 
-The dashboard topbar exposes two pills: the existing **active model provider** (which OpenAI-compatible runtime is being healed) and a new **diagnose** pill (which brain decides the diagnosis + repair plan). Switch the latter to swap between `rules` (deterministic local), `openai-codex` (OpenAI Responses), `anthropic` (Claude via Messages tool-use), or `openai-compatible` (any chat-completions endpoint — OpenRouter, vLLM, LM Studio, Together). The `--diagnosis-provider` flag on `python -m rocm_doctor dashboard` controls the boot default; per-request overrides come from the UI/API. Providers whose API key env var is missing are skipped gracefully and the harness falls through to the next attempt.
+When scripting browser tests, prefer `find text "<chip-label>" click` over `click @<ref>` — React 18's delegated event listener can ignore stale refs.
 
-The dashboard binds against an isolated working copy of the supplied template config (`<workspace>/.rocm-doctor.dashboard.yaml`) and writes incident reports under `<workspace>/reports/dashboard/`, so the template config and CLI state are never mutated by clicks in the UI. POST `/api/reset` restores the working copy from the template.
-
-When scripting browser tests (e.g. via `agent-browser`), prefer `find text "<chip-label>" click` or a direct `eval "(() => Array.from(document.querySelectorAll('.failure-grid .chip')).find(b => b.textContent.trim() === '<id>').click())()"` over `click @<ref>` — React 18's delegated event listener can ignore the `@ref` form when refs go stale across re-renders. Real human clicks are unaffected.
-
-Run the full no-AMD local validation path:
+Full no-AMD validation gate:
 
 ```bash
 scripts/local_validate.sh
 ```
 
-This creates or reuses `/tmp/rocm-doctor-venv`, runs compile and pytest checks, exercises the fake-endpoint demo loop on a copied config, writes an incident report, and runs the optional real-Qwen suite when local Ollama is serving `qwen3:0.6b`.
+This runs `compileall`, `pytest`, the fake-endpoint demo loop on a copied config, report generation, and the optional real-Qwen suite when Ollama is serving `qwen3:0.6b`.
 
-## Core Files
+## Architecture
 
-- `rocm_doctor/config.py`: YAML loading, normalization, validation, path helpers, redaction.
-- `rocm_doctor/model_providers.py`: model-provider adapter boundary. The implemented adapter is `openai-compatible`.
-- `rocm_doctor/transport.py`: shared HTTP transport, retries, rate-limit, timeout, JSON, and SSE streaming handling.
-- `rocm_doctor/adversarial_proxy.py`: real-backend proxy for injecting transport/protocol failures in front of local Qwen or another OpenAI-compatible runtime.
-- `rocm_doctor/templates.py`: strict Jinja template rendering.
-- `rocm_doctor/providers.py`: diagnosis/planning providers: `rules`, `fake`, plus optional LLM brains: `openai-responses` (e.g. `openai-codex`), `anthropic-messages` (Claude), and `openai-chat-completions` (any OpenAI-compatible chat endpoint such as OpenRouter, vLLM, LM Studio, Together).
-- `rocm_doctor/healing_policy.py`: failure taxonomy, candidate-recipe ordering, and learned-fix lookup.
-- `rocm_doctor/recipes.py`: deterministic repair recipes and allowed config paths.
-- `rocm_doctor/executor.py`: safety gate for recipe execution.
-- `tests/`: integration and stress coverage for Qwen, two additional tiny-model profiles, malformed responses, retries, tool calls, config failures, and self-healing loops.
-
-## Config Layout
-
-- `demo/rocm-doctor.yaml`: local fake OpenAI-compatible provider with all deterministic checks enabled.
-- `demo/ollama-tiny-models.yaml`: optional Ollama profiles for `qwen3:0.6b`, `smollm2:135m`, and `tinyllama:1.1b`.
-- `demo/amd-vllm-template.yaml`: AMD Developer Cloud/vLLM template with MI300X hooks.
-- `templates/*.j2`: health-check, tool-call, and OpenAI Responses diagnosis/planning templates.
-
-To add a model provider, add one entry under `model_providers`, set `active_model_provider`, and choose capabilities, endpoint URLs, context limits, retry settings, prompt template fallbacks, health probes, and safe recipes. The core monitor and executor should not change for another OpenAI-compatible runtime.
-
-## Self-Healing Behavior
-
-The `self-heal` command runs `check -> diagnose -> candidate recipes -> apply one safe recipe -> verify`. Every attempted config edit snapshots the current config first. If verification fails, ROCm Doctor restores the snapshot and tries the next safe candidate. Successful repairs are stored in the state file under `learned_fixes` so the same provider/failure signature tries the known working recipe first next time.
-
-Current deterministic recipes include endpoint repair, retry-only recovery, retry backoff tuning, timeout increases, streaming disablement, Qwen health-token tuning, prompt template fallback, strict health-response validation, weak-model tool-probe disablement, fallback-provider switching, last-known-good config restore, context-limit lowering, tool-parser correction, ROCm device flag repair, and dry-run restart accounting.
-
-## Verification
-
-Run the complete no-AMD local validation path:
-
-```bash
-scripts/local_validate.sh
+```
+diagnosis brain  →  recipe_id  →  executor  →  verifier  →  learned-fixes
+(rules or LLM)     (audited list)  (allowlist+    (re-runs    (provider, signature)
+                                    rollback)      probes)     → recipe
 ```
 
-Manual deterministic checks:
+- **`monitor.py`** — health probes against `/v1/models`, `/v1/chat/completions`, optional tool-call probe, context-length check. Emits an `EvidenceBundle`.
+- **`providers/`** — diagnosis brains. `rules` evaluates `providers/rules/rules.yaml`; LLM brains share `LLMDiagnosisProvider` in `providers/base.py` and call out via Jinja-rendered prompts under structured JSON-schema output.
+- **`failures.yaml`** — 13 failure classes mapped to ordered candidate recipes.
+- **`recipes/registry.yaml` + `recipes/builders.py`** — 18 deterministic recipes. YAML metadata + Python builder per id.
+- **`healing_policy.py`** — orders candidates: learned fixes first, then provider-recommended, then taxonomy default. Filtered to the active profile's `safe_repair_recipes`.
+- **`executor.py`** — applies a recipe (or recipe sequence, or bounded patch synthesis), snapshots config, validates type/path/credential safety, rolls back on verification failure.
+- **`operations.py`** — orchestrates the full `self_heal_config` loop with `max_attempts`.
+- **`state.py`** — persists `learned_fixes` keyed by `(provider, failure_class, signature)` so repeat incidents try the known-good recipe first.
+- **`dashboard.py`** — `/api/snapshot`, `/api/check`, `/api/run` (SSE), `/api/reset`, `/api/active-provider`, `/api/configs/{select,import}`, `/api/incident/{id}`.
+- **`adversarial_proxy.py`** — sits in front of a real backend and injects 16 transport/protocol failure modes for stress testing.
 
-```bash
-/tmp/rocm-doctor-venv/bin/python -m compileall rocm_doctor tests
-/tmp/rocm-doctor-venv/bin/python -m pytest -q
-```
+## What the LLM Brain Can and Cannot Do
 
-Optional real tiny-model checks require Ollama:
+The repair-system prompt (`templates/openai_repair_system.j2`) constrains the LLM to three escalating outputs:
 
-```bash
-ollama pull qwen3:0.6b
-ollama pull smollm2:135m
-ollama pull tinyllama:1.1b
-/tmp/rocm-doctor-venv/bin/python -m rocm_doctor check --config demo/ollama-tiny-models.yaml
-```
+1. **Single recipe** — pick one entry from the active profile's safe list.
+2. **Recipe sequence** — pick a primary recipe plus an ordered list applied as one transaction; any rejection rolls the whole sequence back.
+3. **Bounded patch synthesis** — emit `recipe_id: synthesize_patch` with dotted YAML edits. The executor rejects any path outside the union of recipe-reachable paths, any value whose type doesn't match the existing one, and anything credential-shaped.
 
-`qwen3:0.6b` is the primary local model proof path. `smollm2:135m` and `tinyllama:1.1b` are intentionally useful as weak-model rejection checks when they over-answer the strict health sentinel.
+The LLM cannot run shell, edit Python, change credentials, or write files outside the workspace. Prompt-injection escalation is bounded by the executor, not by the prompt.
 
-Run the full real-Qwen adversarial suite when local Ollama is hosting `qwen3:0.6b`:
+## Recipes (18)
 
-```bash
-ROCM_DOCTOR_RUN_REAL_QWEN=1 /tmp/rocm-doctor-venv/bin/python -m pytest tests/test_real_qwen_adversarial.py -q -s
-```
+`noop`, `retry_without_config_change`, `update_endpoint_url`, `increase_health_max_tokens`, `lower_health_max_tokens`, `increase_timeout`, `increase_retry_backoff`, `disable_streaming`, `switch_prompt_template`, `fallback_model_provider`, `restore_last_known_good_config`, `tighten_expected_health_response`, `disable_tool_probe_for_weak_model`, `lower_max_model_len`, `set_tool_parser`, `set_rocm_device_flags`, `synthesize_patch`, `restart_known_service` (dry-run only).
+
+## Failure Classes (13)
+
+`endpoint_broken`, `wrong_endpoint_port`, `one_time_rate_limit`, `repeated_rate_limit`, `timeout`, `empty_qwen_output`, `instruction_drift`, `repetitive_loop`, `broken_streaming`, `bad_template`, `permanent_500`, `invalid_config`, `config_invalid`. Plus harness-emitted `provider_output_invalid`, `provider_skipped`, `unknown_failure`, `tool_parser_mismatch`, `context_length_too_large`, `missing_rocm_device_flags` handled by `healing_policy.py` directly.
+
+## Configs
+
+- `demo/rocm-doctor.yaml` — local fake provider, all checks enabled.
+- `demo/ollama-tiny-models.yaml` — Ollama profiles for `qwen3:0.6b`, `smollm2:135m`, `tinyllama:1.1b`.
+- `demo/amd-vllm-template.yaml` — MI300X/vLLM template with ROCm device hooks.
+
+To add a model provider, add an entry under `model_providers`, set `active_model_provider`, choose capabilities, endpoint URLs, context limits, retry settings, prompt template fallbacks, and safe recipes. The core monitor and executor do not change.
 
 ## AMD Readiness
 
-AMD-specific assumptions are config, not code: `hardware`, `launch.required_device_flags`, provider endpoint URLs, context limits, safe recipes, and stress-test targets are all YAML-controlled. For MI300X/vLLM validation, add or activate a `model_providers` entry with the vLLM endpoint, ROCm device flags, benchmark profile, and context limit appropriate for that deployment.
+AMD specifics live entirely in YAML: `hardware`, `launch.required_device_flags`, vLLM endpoint URL, context limits, safe recipes. For MI300X, activate a `model_providers` entry pointing at the deployed vLLM endpoint with `runtime_type: amd-vllm` and the appropriate ROCm device flags.
 
-See `docs/provider-architecture.md` and `docs/testing-and-amd-readiness.md` for maintainer details.
+See `docs/` for setup, demo, testing, and provider details.
